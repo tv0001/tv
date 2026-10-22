@@ -1,9 +1,6 @@
-# 直播列表候选：名称<Tab>地址。检测时会抽样请求列表里的流地址，活着的才写进 best.json。
-iptv-org 中国	https://iptv-org.github.io/iptv/countries/cn.m3u
-iptv-org 香港	https://iptv-org.github.io/iptv/countries/hk.m3u
-iptv-org 台湾	https://iptv-org.github.io/iptv/countries/tw.m3u
-YueChan	https://raw.githubusercontent.com/YueChan/Live/main/IPTV.m3u
-Guovin iptv-api	https://raw.githubusercontent.com/Guovin/iptv-api/gd/output/result.m3u
+# 直播列表：名称<Tab>地址[<Tab>pin]。
+# pin：固定放在最前面，不检测。用于 build_lives.py 在本地直连测速生成的列表，
+#      海外的 CI 测不了国内直播流，检测反而会把它误删。
+# 其余行会抽样检测流地址，活着的才写进 best.json。
+央视卫视(测速)	https://raw.githubusercontent.com/tv0001/tv/main/tvbox-check/out/live.txt	pin
 vbskycn	https://raw.githubusercontent.com/vbskycn/iptv/master/tv/iptv4.m3u
-Kimentanm aptv	https://raw.githubusercontent.com/Kimentanm/aptv/master/m3u/iptv.m3u
-fanmingming IPv6	https://live.fanmingming.cn/tv/m3u/ipv6.m3u

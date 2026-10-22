@@ -297,17 +297,25 @@ def with_gh_proxy(node):
 
 
 def build_lives(config, live_rows):
-    """Working candidate lists first, then the config's own lists that still work.
-    Falls back to the config's original lives if nothing verifies."""
+    """Pinned lists first (no check), then working candidate lists, then the config's
+    own lists that still work. Falls back to the config's original lives if none qualify."""
+    pinned = [(r[0], r[1]) for r in live_rows if r[2:] == ["pin"]]
+    to_check = [(r[0], r[1]) for r in live_rows if r[2:] != ["pin"]]
     own = [e for e in (config.get("lives") or []) if isinstance(e, dict)]
     own_rows = [(e.get("name") or e.get("group") or "config live", live_entry_url(e)) for e in own]
-    jobs = list(live_rows) + [(n, u) for n, u in own_rows if u]
+    jobs = to_check + [(n, u) for n, u in own_rows if u]
     with cf.ThreadPoolExecutor(max_workers=4) as pool:
         checked = list(pool.map(lambda r: safe_check_live(*r), jobs))
     by_url = {r["url"]: r for r in checked}
 
     lives, seen = [], set()
-    for name, url in live_rows:
+    # Pinned lists are speed-tested elsewhere (build_lives.py, on the viewer's network);
+    # a check from a CI runner abroad would wrongly drop geo-restricted streams.
+    for name, url in pinned:
+        if url not in seen:
+            seen.add(url)
+            lives.append({"name": name, "type": 0, "url": url})
+    for name, url in to_check:
         if by_url[url]["ok"] and url not in seen:
             seen.add(url)
             lives.append({"name": name, "type": 0, "url": url})
@@ -326,8 +334,8 @@ def read_candidates(path):
             if not ln or ln.startswith("#"):
                 continue
             parts = [p.strip() for p in ln.split("\t")]
-            if len(parts) != 2 or not all(parts):
-                print(f"skip {path}:{n}: expected 'name<TAB>url'", file=sys.stderr)
+            if len(parts) not in (2, 3) or not all(parts):
+                print(f"skip {path}:{n}: expected 'name<TAB>url[<TAB>pin]'", file=sys.stderr)
                 continue
             rows.append(parts)
     return rows
@@ -351,7 +359,7 @@ def main():
     cand_path, out_dir = sys.argv[1], sys.argv[2]
     live_rows = read_candidates(sys.argv[3]) if len(sys.argv) > 3 else []
     os.makedirs(out_dir, exist_ok=True)
-    rows = read_candidates(cand_path)
+    rows = [r[:2] for r in read_candidates(cand_path)]
 
     with cf.ThreadPoolExecutor(max_workers=12) as pool:
         results = list(pool.map(lambda r: safe_probe(*r), rows))

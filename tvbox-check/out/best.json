@@ -2,19 +2,9 @@
   "spider": "https://gh-proxy.com/https://raw.githubusercontent.com/qist/tvbox/master/jar/spider.jar;md5;ea98a70ee6967e433c24e4941ede7fd8",
   "lives": [
     {
-      "name": "iptv-org 中国",
+      "name": "央视卫视(测速)",
       "type": 0,
-      "url": "https://iptv-org.github.io/iptv/countries/cn.m3u"
-    },
-    {
-      "name": "iptv-org 香港",
-      "type": 0,
-      "url": "https://iptv-org.github.io/iptv/countries/hk.m3u"
-    },
-    {
-      "name": "iptv-org 台湾",
-      "type": 0,
-      "url": "https://iptv-org.github.io/iptv/countries/tw.m3u"
+      "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tvbox-check/out/live.txt"
     },
     {
       "name": "vbskycn",
