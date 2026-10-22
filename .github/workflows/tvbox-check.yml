@@ -1,0 +1,39 @@
+name: TVBox source check
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tvbox-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Probe sources
+        working-directory: tvbox-check
+        run: python3 -I check.py candidates.tsv out
+
+      - name: Commit updated configs
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tvbox-check/out/best.json tvbox-check/out/tvbox-multi.json tvbox-check/out/best-source.json
+          if git diff --cached --quiet; then
+            echo "No change in published configs"
+          else
+            git commit -m "Update TVBox sources"
+            git push
+          fi
