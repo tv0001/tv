@@ -26,7 +26,7 @@ import urllib.request
 UA = "okhttp/3.12.0"
 LIST_TIMEOUT = 15
 STREAM_TIMEOUT = 6
-MAX_TESTED_PER_CHANNEL = 6
+MAX_TESTED_PER_CHANNEL = 10  # about one try per source list
 KEEP_PER_CHANNEL = 3
 MIN_SPEEDUP = 1.5        # segment must download 1.5x faster than it plays
 MIN_PROGRESSIVE_KBPS = 1500  # for non-HLS streams we can only measure throughput
@@ -192,7 +192,7 @@ def main():
         lists = list(pool.map(fetch_list, read_sources(src_path)))
 
     # Round-robin across lists so each channel's test budget covers several providers.
-    per_list = []
+    per_list, origin = [], {}  # origin: url -> first list it came from, for per-list stats
     for name, pairs, note in lists:
         print(f"list {name}: {len(pairs)} entries {note}")
         bucket = {}
@@ -200,6 +200,7 @@ def main():
             key = channel_key(ch)
             if key:
                 bucket.setdefault(key, []).append(url)
+                origin.setdefault(url, name)
         per_list.append(bucket)
     candidates = {}
     for key in sorted({k for b in per_list for k in b}, key=channel_sort_key):
@@ -222,10 +223,16 @@ def main():
     with cf.ThreadPoolExecutor(max_workers=TEST_WORKERS) as pool:
         tested = list(pool.map(lambda j: (j[0], j[1], speed_test(j[1])), jobs))
 
-    good = {}
+    good, stats = {}, {}
     for key, url, res in tested:
+        st = stats.setdefault(origin[url], [0, 0])
+        st[0] += 1
         if res["ok"]:
+            st[1] += 1
             good.setdefault(key, []).append((res["speedup"], url))
+    print("\npassed / tested per list:")
+    for name, (n, ok) in sorted(stats.items(), key=lambda kv: -kv[1][1]):
+        print(f"  {ok:>3}/{n:<3} {name}")
     lines, report = [], {"channels": {}, "missing": []}
     groups = [("央视", [k for k in candidates if k.startswith("CCTV")]),
               ("卫视", [k for k in candidates if not k.startswith("CCTV")])]

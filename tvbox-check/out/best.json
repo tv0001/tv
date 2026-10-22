@@ -7,6 +7,11 @@
       "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tvbox-check/out/live.txt"
     },
     {
+      "name": "Guovin iptv-api",
+      "type": 0,
+      "url": "https://gh-proxy.com/https://raw.githubusercontent.com/Guovin/iptv-api/gd/output/result.m3u"
+    },
+    {
       "name": "vbskycn",
       "type": 0,
       "url": "https://gh-proxy.com/https://raw.githubusercontent.com/vbskycn/iptv/master/tv/iptv4.m3u"

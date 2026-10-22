@@ -3,4 +3,5 @@
 #      海外的 CI 测不了国内直播流，检测反而会把它误删。
 # 其余行会抽样检测流地址，活着的才写进 best.json。
 央视卫视(测速)	https://raw.githubusercontent.com/tv0001/tv/main/tvbox-check/out/live.txt	pin
+Guovin iptv-api	https://raw.githubusercontent.com/Guovin/iptv-api/gd/output/result.m3u	pin
 vbskycn	https://raw.githubusercontent.com/vbskycn/iptv/master/tv/iptv4.m3u

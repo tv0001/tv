@@ -1,7 +1,8 @@
 # build_lives.py 的频道来源：从这些列表里收集央视、卫视频道，再逐个直连测速。
 vbskycn	https://raw.githubusercontent.com/vbskycn/iptv/master/tv/iptv4.m3u
 Guovin iptv-api	https://raw.githubusercontent.com/Guovin/iptv-api/gd/output/result.m3u
-qist tvboxtv	https://raw.githubusercontent.com/qist/tvbox/master/tvboxtv.txt
-epg.pw	https://epg.pw/test_channels.m3u
-Kimentanm aptv	https://raw.githubusercontent.com/Kimentanm/aptv/master/m3u/iptv.m3u
 iptv-org 中国	https://iptv-org.github.io/iptv/countries/cn.m3u
+Collect-IPTV	https://raw.githubusercontent.com/zilong7728/Collect-IPTV/main/best_sorted.m3u
+ChinaIPTV	https://raw.githubusercontent.com/hujingguang/ChinaIPTV/main/cnTV_AutoUpdate.m3u8
+YanG Gather	https://raw.githubusercontent.com/YanG-1989/m3u/main/Gather.m3u
+suxuang ipv4	https://raw.githubusercontent.com/suxuang/myIPTV/main/ipv4.m3u

@@ -34,7 +34,7 @@ python3 -I build_lives.py live-sources.tsv out
 
 这一步要在和电视盒子**同一个网络**的机器上跑。GitHub Actions 的 runner 在海外，测出来的结果不能说明家里会不会卡，所以 workflow 不跑这一步。
 
-`out/live.txt` 在 `lives.tsv` 里标记为 `pin`，固定放在 `best.json` 直播的第一位，Actions 检测时不会把它删掉。直播线路失效得很快，建议每隔一两天在本地重跑一次，然后提交推送 `out/live.txt`。
+`out/live.txt` 和 Guovin iptv-api 在 `lives.tsv` 里标记为 `pin`，固定放在 `best.json` 直播的最前面，Actions 检测时不会把它们删掉。直播线路失效得很快，建议每隔一两天在本地重跑一次，然后提交推送 `out/live.txt`。
 
 ## 选源规则
 
@@ -91,10 +91,11 @@ jsDelivr 的 `@main` 有缓存，更新可能延迟几个小时。
 
 | 名称 | 结果 |
 |---|---|
-| 央视卫视(测速) | 本地直连测速：央视 18 个频道、卫视 30 个频道通过，共 91 条线路，速度中位数约为播放速度的 3.4 倍 |
-| vbskycn | 备用，抽样 7/8 有响应，531 个流 |
+| 央视卫视(测速) | 本地直连测速，从 7 个来源合并：央视 20 个频道全部通过（含 CCTV6、CCTV4K），卫视 39 个通过 |
+| Guovin iptv-api | 单个列表里表现最好，直连测速 185 条线路通过 111 条（约 60%），作为第二个直播源 |
+| vbskycn | 备用，只做了抽样检测 |
 
-本次测速没有找到合格线路的频道：CCTV6、CCTV4K、江苏卫视、四川卫视、河南卫视、河北卫视、广西卫视等。
+本次测速没有找到合格线路的卫视：河南、海南、上海卫视等。各来源通过情况：Guovin 111/185、vbskycn 13/50、Collect-IPTV 7/16、suxuang 5/93、iptv-org 4/6、ChinaIPTV 4/19。
 
 注意：
 
