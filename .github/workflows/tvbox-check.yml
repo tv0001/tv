@@ -24,7 +24,7 @@ jobs:
 
       - name: Probe sources
         working-directory: tvbox-check
-        run: python3 -I check.py candidates.tsv out
+        run: python3 -I check.py candidates.tsv out lives.tsv
 
       - name: Commit updated configs
         run: |
