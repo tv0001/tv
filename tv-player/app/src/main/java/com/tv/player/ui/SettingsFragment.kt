@@ -146,6 +146,10 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             }
         }
 
+        view.findViewById<View>(R.id.phonePush).visibility = if (requireContext().isTv() || requireContext().isTablet()) View.VISIBLE else View.GONE
+        view.findViewById<View>(R.id.phonePush).setOnClickListener {
+            PhonePush.show(requireActivity() as androidx.appcompat.app.AppCompatActivity) { (activity as? MainActivity)?.pushSearch(it) }
+        }
         view.findViewById<View>(R.id.manageSources).setOnClickListener {
             startActivity(Intent(requireContext(), SourcesActivity::class.java))
         }

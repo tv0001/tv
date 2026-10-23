@@ -1,20 +1,29 @@
 package com.tv.player.ui
 
+import android.Manifest
+import android.app.PictureInPictureParams
 import android.app.UiModeManager
 import android.content.Context
 import android.net.ConnectivityManager
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Color
+import android.graphics.RenderEffect
+import android.graphics.Shader
 import android.graphics.drawable.ColorDrawable
 import android.media.AudioManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
+import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
+import android.util.Rational
 import android.view.GestureDetector
 import android.view.Gravity
 import android.view.KeyEvent
@@ -23,6 +32,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.addCallback
@@ -37,6 +48,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
@@ -47,18 +59,26 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.ui.PlayerView
 import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.bottomsheet.BottomSheetBehavior
+import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.google.android.material.bottomsheet.BottomSheetDragHandleView
+import com.google.android.material.button.MaterialButtonToggleGroup
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import coil.load
 import com.tv.player.R
 import com.tv.player.core.Cms
 import com.tv.player.core.Dlna
+import com.tv.player.core.Epg
 import com.tv.player.core.DlnaDevice
 import com.tv.player.core.Http
 import com.tv.player.core.LineProbe
 import com.tv.player.core.Library
 import com.tv.player.core.Resolve
 import com.tv.player.core.Store
+import com.tv.player.core.Tracker
 import com.tv.player.data.LiveChannel
 import com.tv.player.data.VodDetail
 import com.tv.player.data.VodGroup
@@ -82,6 +102,8 @@ class PlayActivity : BaseActivity() {
     companion object {
         private const val STALL_MS = 20_000L
         private const val SAVE_MS = 10_000L
+        private const val MAX_SKIP = 300
+        private const val EP_GROUP = 30
 
         fun startVod(context: Context, group: VodGroup) = context.startActivity(
             Intent(context, PlayActivity::class.java)
@@ -91,7 +113,7 @@ class PlayActivity : BaseActivity() {
 
         fun startLive(context: Context, channel: LiveChannel) = context.startActivity(
             Intent(context, PlayActivity::class.java)
-                .putExtra("live", true).putExtra("title", channel.name)
+                .putExtra("live", true).putExtra("title", channel.name).putExtra("group", channel.group)
                 .putStringArrayListExtra("urls", ArrayList(channel.urls)),
         )
     }
@@ -128,7 +150,26 @@ class PlayActivity : BaseActivity() {
     /** Speed-test results per candidate URL; the line order follows them (smooth first, then sharpest). */
     private val probes = HashMap<String, LineProbe.Result>()
     private var pinned = false // the user picked a line by hand: keep it first
+    private var probeJobs: List<Job> = emptyList() // speed tests still running; cancelled when the channel changes
     private var needWarm = false // test the lines before the first start
+
+    // Live channel zapping: the channels of the group the current one was opened from.
+    private var liveGroup = ""
+    private var groupChannels: List<LiveChannel> = emptyList()
+    private var digits = ""
+
+    // Skip intro / outro, speed, sleep timer, leaving the app.
+    private var introDone = false
+    private var outroDone = false
+    private var speedBoost = false
+    private var sleepAtMs = 0L // SystemClock.elapsedRealtime() deadline; 0 = off
+    private var sleepAfterEp = false
+    private var sleepChoice = 0
+    private var pipRequested = false
+    private var videoOff = false
+    private var keepAlive = false // the background-sound service was started and must be stopped again
+    private var leaving = false // Home / recents was pressed, as opposed to a dialog covering the screen
+    private var tick = 0
 
     private var player: ExoPlayer? = null
     private var playJob: Job? = null
@@ -152,14 +193,39 @@ class PlayActivity : BaseActivity() {
     private var epLabel: TextView? = null
     private var hud: TextView? = null
     private val lineAdapter = ChipAdapter { selectLine(it) }
-    private val epAdapter = ChipAdapter { selectEpisode(it) }
+    /** TV: episodes are shown 30 at a time; [epOffset] is the first episode of the shown range. */
+    private var epOffset = 0
+    private var epGroup = -1 // the range the user picked; -1 = follow the playing episode
+    private val groupAdapter = ChipAdapter { epGroup = it; refreshLists() }
+    private val epAdapter = ChipAdapter(fill = true) {
+        val ep = epOffset + it
+        // The episode already playing in the small window: keep its position, just go full screen.
+        if (!(isTv && !isLive && !tvFull && ep == curEp && started)) selectEpisode(ep)
+        if (isTv && !isLive && !tvFull) setTvFull(true) // like a TV box: picking an episode starts it full screen
+    }
 
     private val landscape get() = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     private val isTv by lazy { isTv() }
 
-    /** Side-by-side picture + panel on TV, and on wide tablet screens; the stacked layout everywhere else. */
-    private fun playLayout() =
-        if (isTv || (isTablet() && resources.configuration.screenWidthDp >= 720)) R.layout.activity_play_tv else R.layout.activity_play
+    /**
+     * TV: full-screen picture with a control bar over the bottom. Wide tablets: picture + side panel. Everywhere else
+     * the stacked phone layout.
+     */
+    private fun playLayout() = when {
+        isTv && !isLive && !tvFull -> R.layout.activity_play_tvdetail
+        isTv -> R.layout.activity_play_overlay
+        isTablet() && resources.configuration.screenWidthDp >= 720 -> R.layout.activity_play_tv
+        else -> R.layout.activity_play
+    }
+
+    /** The TV control bar over the picture (shown on demand, hides by itself). */
+    private val overlay get() = isTv && (isLive || tvFull)
+
+    /** TV, on demand: false = the details page (small picture), true = full screen with the control bar. */
+    private var tvFull = false
+    private var progressText: TextView? = null
+    private var playPauseBtn: MaterialButton? = null
+    private val hidePanel = Runnable { setPanelVisible(false) }
     private var panel: View? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -168,6 +234,7 @@ class PlayActivity : BaseActivity() {
         title = intent.getStringExtra("title").orEmpty()
         if (isLive) {
             liveUrls = intent.getStringArrayListExtra("urls") ?: emptyList()
+            liveGroup = intent.getStringExtra("group").orEmpty()
         } else {
             key = intent.getStringExtra("key").orEmpty()
             pic = intent.getStringExtra("pic").orEmpty()
@@ -193,6 +260,7 @@ class PlayActivity : BaseActivity() {
             .also {
                 it.addListener(listener)
                 it.playWhenReady = true
+                it.setPlaybackSpeed(if (isLive) 1f else Store.playSpeed())
             }
 
         setContentView(playLayout())
@@ -200,7 +268,12 @@ class PlayActivity : BaseActivity() {
         applySystemBars()
 
         onBackPressedDispatcher.addCallback(this) {
-            if (panel?.visibility == View.GONE) {
+            if (overlay) {
+                // TV: back first hides the control bar, then returns to the details page (on demand) or leaves.
+                if (panel?.visibility == View.VISIBLE) setPanelVisible(false)
+                else if (!isLive) setTvFull(false)
+                else finish()
+            } else if (panel?.visibility == View.GONE) {
                 panel?.visibility = View.VISIBLE
                 playerView.setFullscreenButtonState(false)
             } else if (requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE) {
@@ -213,22 +286,26 @@ class PlayActivity : BaseActivity() {
         if (isLive) {
             refreshLists()
             if (liveUrls.isEmpty()) setInfo("这个频道没有可用线路") else {
+                applyRememberedLine()
                 needWarm = true
                 playCurrent(0)
             }
         } else {
             lifecycleScope.launch { initVod() }
         }
+        handler.postDelayed(ticker, 1_000)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        detachViews()
         setContentView(playLayout())
         bindViews()
         refreshLists()
         updateFavorite()
         setInfo(infoText)
         applySystemBars()
+        if (isInPictureInPictureMode) applyPip(true)
     }
 
     private fun bindViews() {
@@ -237,7 +314,18 @@ class PlayActivity : BaseActivity() {
         findViewById<TextView?>(R.id.title)?.text = title
         findViewById<View?>(R.id.back)?.setOnClickListener { onBackPressedDispatcher.onBackPressed() }
         panel = findViewById(R.id.panel)
-        findViewById<View>(R.id.cast).setOnClickListener { showCast() }
+        progressText = findViewById(R.id.progressText)
+        findViewById<View?>(R.id.fullscreen)?.setOnClickListener { setTvFull(true) }
+        if (isTv && !overlay) playerView.setOnClickListener { setTvFull(true) }
+        playPauseBtn = findViewById<MaterialButton?>(R.id.playPause)?.also {
+            it.setOnClickListener { player?.let { p -> if (p.isPlaying) p.pause() else p.play() } }
+        }
+        findViewById<View>(R.id.cast).apply {
+            setOnClickListener { showCast() }
+            // Casting is for sending a phone's video to the TV; on the TV itself there is nothing to cast to.
+            if (isTv) visibility = View.GONE
+        }
+        findViewById<View>(R.id.playSettings).setOnClickListener { showPlaySettings() }
         tvInfo = findViewById(R.id.info)
         tvInfo?.setOnClickListener { if (allFailed) playCurrent(0) }
         favoriteBtn = findViewById<MaterialButton?>(R.id.favorite)?.also {
@@ -248,8 +336,13 @@ class PlayActivity : BaseActivity() {
             }
         }
         linesView = findViewById<RecyclerView?>(R.id.lines)?.also { it.adapter = lineAdapter }
+        findViewById<RecyclerView?>(R.id.epGroups)?.adapter = groupAdapter
+        findViewById<View?>(R.id.desc)?.setOnClickListener { showSynopsis() }
         episodesView = findViewById<RecyclerView?>(R.id.episodes)?.also {
-            it.layoutManager = GridLayoutManager(this, if (panel != null) 3 else 4)
+            // TV bar: one row that scrolls sideways, so the bar stays low; elsewhere a grid.
+            it.layoutManager = if (isTv) LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
+            else GridLayoutManager(this, if (panel != null) 3 else 4)
+            epAdapter.fill = !isTv
             it.adapter = epAdapter
             if (isLive) it.visibility = View.GONE
         }
@@ -264,14 +357,97 @@ class PlayActivity : BaseActivity() {
             }
         }
         playerView.setFullscreenButtonState(if (panel != null) panel?.visibility == View.GONE else landscape)
-        if (isTv) playerView.requestFocus()
         setupGestures()
+        if (overlay) {
+            updatePlayPause()
+            setPanelVisible(true)
+        } else if (isTv) {
+            (findViewById<View?>(R.id.fullscreen) ?: playerView).requestFocus()
+        }
+    }
+
+    /** Before a layout swap: let go of the old views so the player and the shared adapters do not keep them. */
+    private fun detachViews() {
+        if (::playerView.isInitialized) playerView.player = null
+        linesView?.adapter = null
+        episodesView?.adapter = null
+        findViewById<RecyclerView?>(R.id.epGroups)?.adapter = null
+    }
+
+    /** TV, on demand: switch between the details page and full screen; playback carries on. */
+    private fun setTvFull(full: Boolean) {
+        if (tvFull == full) return
+        tvFull = full
+        handler.removeCallbacks(hidePanel)
+        detachViews()
+        setContentView(playLayout())
+        bindViews()
+        refreshLists()
+        updateFavorite()
+        setInfo(infoText)
+        applySystemBars()
+        if (full) {
+            setPanelVisible(false)
+            flashHud("$title  ${epName()}", 1_500)
+        }
+    }
+
+    /** The details page text: score, year / category / area / status, people, synopsis; the blurred backdrop. */
+    private fun fillDetail() {
+        val d = details[curSrc] ?: return
+        findViewById<TextView?>(R.id.meta)?.text =
+            listOf(d.score.takeIf { it.isNotEmpty() }?.let { "$it 分" }.orEmpty(), d.year, d.type, d.area, d.remarks)
+                .filter { it.isNotEmpty() }.joinToString("  /  ")
+        findViewById<ImageView?>(R.id.backdrop)?.let { img ->
+            if (img.tag == null) {
+                img.tag = true
+                img.load(d.pic.ifEmpty { pic }.ifEmpty { null })
+                if (Build.VERSION.SDK_INT >= 31) img.setRenderEffect(RenderEffect.createBlurEffect(60f, 60f, Shader.TileMode.CLAMP))
+            }
+        }
+        findViewById<TextView?>(R.id.people)?.text = listOfNotNull(
+            d.director.takeIf { it.isNotEmpty() }?.let { "导演：$it" },
+            d.actor.takeIf { it.isNotEmpty() }?.let { "主演：$it" },
+        ).joinToString("\n")
+        findViewById<TextView?>(R.id.desc)?.text = d.content.ifEmpty { "暂无简介" }
+    }
+
+    /** TV control bar: showing it moves focus into it; it hides again after a few idle seconds while playing. */
+    private fun setPanelVisible(show: Boolean) {
+        val bar = panel ?: return
+        handler.removeCallbacks(hidePanel)
+        bar.visibility = if (show) View.VISIBLE else View.GONE
+        if (show) {
+            updateProgress()
+            listOfNotNull(playPauseBtn, favoriteBtn, findViewById(R.id.playSettings))
+                .firstOrNull { it.visibility == View.VISIBLE }?.requestFocus()
+            bumpPanel()
+        } else {
+            playerView.requestFocus()
+        }
+    }
+
+    private fun bumpPanel() {
+        handler.removeCallbacks(hidePanel)
+        if (player?.isPlaying == true) handler.postDelayed(hidePanel, 6_000)
+    }
+
+    private fun updatePlayPause() {
+        val b = playPauseBtn ?: return
+        val playing = player?.isPlaying != false
+        b.text = if (playing) "暂停" else "播放"
+        b.visibility = if (isLive) View.GONE else View.VISIBLE
+    }
+
+    private fun updateProgress() {
+        val p = player ?: return
+        progressText?.text = if (isLive || p.duration <= 0) "" else "${formatTime(p.currentPosition)} / ${formatTime(p.duration)}"
     }
 
     private fun applySystemBars() {
         val controller = WindowCompat.getInsetsController(window, window.decorView)
-        // Only the full-screen phone layout hides the system bars; the picture + side panel layout keeps them.
-        if (landscape && panel == null) {
+        // The full-screen layouts (phone landscape, TV) hide the system bars; the picture + side panel layout keeps them.
+        if ((landscape && panel == null) || isTv) {
             controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             controller.hide(WindowInsetsCompat.Type.systemBars())
         } else {
@@ -283,14 +459,21 @@ class PlayActivity : BaseActivity() {
 
     private val listener = object : Player.Listener {
         override fun onPlaybackStateChanged(state: Int) {
+            updateKeepScreen()
             when (state) {
                 Player.STATE_READY -> {
                     handler.removeCallbacks(stall)
+                    val resumed = pendingStart > 0
                     started = true
                     pendingStart = 0
+                    if (isLive) refreshEpg() else skipIntro(resumed)
                     setInfo(playingText())
                 }
                 Player.STATE_ENDED -> if (!isLive) {
+                    if (sleepAfterEp) {
+                        sleepNow("这一集播完了，已按睡眠定时停止")
+                        return
+                    }
                     val count = details[curSrc]?.lines?.getOrNull(curLine)?.episodes?.size ?: 0
                     if (curEp + 1 < count) selectEpisode(curEp + 1)
                 }
@@ -305,6 +488,19 @@ class PlayActivity : BaseActivity() {
             refreshLists()
         }
 
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            updateKeepScreen()
+            updatePlayPause()
+            // Paused on TV: keep the bar up so the picture is not left frozen with nothing on screen.
+            if (overlay && panel?.visibility == View.VISIBLE) bumpPanel()
+        }
+
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) = updateKeepScreen()
+
+        override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
+            if (!isLive && !speedBoost) Store.setPlaySpeed(playbackParameters.speed)
+        }
+
         override fun onPlayerError(error: PlaybackException) {
             Log.d("TVP", "player error ${error.errorCodeName} on ${current?.label}")
             setInfo("这条线路播放失败，正在换下一条…")
@@ -312,9 +508,36 @@ class PlayActivity : BaseActivity() {
         }
     }
 
+    /**
+     * No screen lock / screen saver while the video plays, buffers or changes line; paused, finished or failed, the
+     * normal timeout applies again.
+     */
+    private fun updateKeepScreen() {
+        val p = player
+        val on = p != null && p.playWhenReady && p.playbackState != Player.STATE_ENDED && !allFailed
+        if (on) window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
     private fun playingText(): String {
         val base = if (isLive) "正在播放：$title · ${current?.label.orEmpty()}" else "正在播放：${epName()} · ${current?.label.orEmpty()}"
-        return if (resolution.isEmpty()) base else "$base · $resolution"
+        val line = if (resolution.isEmpty()) base else "$base · $resolution"
+        return if (isLive) epgText()?.let { "$line\n$it" } ?: line else line
+    }
+
+    private fun clock(minutes: Int) = "%02d:%02d".format(minutes / 60 % 24, minutes % 60)
+
+    private fun epgText(): String? {
+        val now = Epg.cached(title) ?: return null
+        val cur = now.current ?: return null
+        return "现在：${clock(cur.start)}《${cur.title}》" + (now.next?.let { "\n接下来：《${it.title}》" } ?: "")
+    }
+
+    private fun refreshEpg() {
+        val name = title
+        lifecycleScope.launch {
+            if (Epg.now(name) != null && started && name == title) setInfo(playingText())
+        }
     }
 
     private fun lineKey() = if (isLive) "live:$curLine" else "$curSrc:$curLine"
@@ -329,7 +552,10 @@ class PlayActivity : BaseActivity() {
     }
 
     private fun playCurrent(startMs: Long) {
+        introDone = false
+        outroDone = false
         allFailed = false
+        updateKeepScreen()
         tried.clear()
         pendingStart = startMs
         started = false
@@ -342,6 +568,11 @@ class PlayActivity : BaseActivity() {
      */
     private fun failOver() {
         if (playJob?.isActive == true) return
+        // A remembered live line that no longer starts should not keep costing a failed attempt every time.
+        if (isLive && !started && current?.url != null && current?.url == Store.liveLine(title)) {
+            Store.clearLiveLine(title)
+            pinned = false
+        }
         // Dropped mid-playback: carry on from here on the next line instead of starting over.
         if (!isLive && started) pendingStart = player?.currentPosition ?: pendingStart
         attempt()
@@ -364,6 +595,7 @@ class PlayActivity : BaseActivity() {
                 if (cand == null) {
                     player?.stop()
                     allFailed = true
+                    updateKeepScreen()
                     setInfo("所有线路都试过了，没有能播放的。点这里重试，或换一部")
                     return@launch
                 }
@@ -466,6 +698,7 @@ class PlayActivity : BaseActivity() {
         val cap = minOf(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
         val fresh = rawCandidates().filter { it.url !in probes }.take(6)
         if (fresh.size < 2) return
+        probeJobs.forEach { it.cancel() }
         val jobs = fresh.map { c ->
             lifecycleScope.launch {
                 val result = LineProbe.probe(c.url, cap)
@@ -473,6 +706,7 @@ class PlayActivity : BaseActivity() {
                 Log.d("TVP", "probe ${c.label}: $result")
             }
         }
+        probeJobs = jobs
         val t0 = System.currentTimeMillis()
         while (jobs.any { it.isActive }) {
             val waited = System.currentTimeMillis() - t0
@@ -530,6 +764,7 @@ class PlayActivity : BaseActivity() {
         }
         refreshLists()
         updateFavorite()
+        Library.markSeen(key, Tracker.countOf(first))
         needWarm = true
         playCurrent(start)
     }
@@ -542,6 +777,7 @@ class PlayActivity : BaseActivity() {
         if (isLive) {
             liveStart = index
             curLine = index
+            liveUrls.getOrNull(index)?.let { Store.setLiveLine(title, it) }
         } else {
             val d = details[curSrc] ?: return
             curLine = index
@@ -554,6 +790,7 @@ class PlayActivity : BaseActivity() {
     private fun selectEpisode(index: Int) {
         if (index < 0) return
         curEp = index
+        epGroup = -1 // the range tabs follow the episode now playing again
         refreshLists()
         playCurrent(0)
     }
@@ -564,6 +801,7 @@ class PlayActivity : BaseActivity() {
             return
         }
         val d = details[curSrc] ?: return
+        fillDetail()
         val names = d.lines.map { it.name }
         lineAdapter.submit(
             names.mapIndexed { i, n ->
@@ -573,9 +811,23 @@ class PlayActivity : BaseActivity() {
             curLine,
         )
         val episodes = d.lines.getOrNull(curLine)?.episodes ?: emptyList()
-        epAdapter.submit(episodes.map { it.name }, curEp)
+        val groups = findViewById<RecyclerView?>(R.id.epGroups)
+        if (groups != null && episodes.size > EP_GROUP) {
+            val count = (episodes.size + EP_GROUP - 1) / EP_GROUP
+            val g = (if (epGroup in 0 until count) epGroup else curEp / EP_GROUP).coerceIn(0, count - 1)
+            epOffset = g * EP_GROUP
+            groupAdapter.submit((0 until count).map { "${it * EP_GROUP + 1}-${minOf((it + 1) * EP_GROUP, episodes.size)}" }, g)
+            groups.visibility = View.VISIBLE
+        } else {
+            epOffset = 0
+            groups?.visibility = View.GONE
+        }
+        val shown = episodes.drop(epOffset).take(if (groups != null) EP_GROUP else episodes.size)
+        // TV: "第03集" reads as just "3" on a tile, like TV video apps; other names stay as they are.
+        val label = { n: String -> if (isTv) Regex("^第0*(\\d+)[集期话]$").find(n)?.groupValues?.get(1) ?: n else n }
+        epAdapter.submit(shown.map { label(it.name) }, curEp - epOffset)
         epLabel?.text = "选集（共 ${episodes.size} 集）"
-        episodesView?.scrollToPosition(curEp)
+        episodesView?.scrollToPosition((curEp - epOffset).coerceAtLeast(0))
     }
 
     private fun setInfo(text: String) {
@@ -594,7 +846,8 @@ class PlayActivity : BaseActivity() {
     // ---- favorites -----------------------------------------------------------------------------------------------
 
     private fun toggleFavorite() {
-        Library.setFavorite(Library.Entry(key, title, pic, items), !Library.isFavorite(key))
+        val count = details[curSrc]?.let { Tracker.countOf(it) } ?: 0
+        Library.setFavorite(Library.Entry(key, title, pic, items, seen = count, latest = count), !Library.isFavorite(key))
         updateFavorite()
     }
 
@@ -605,6 +858,337 @@ class PlayActivity : BaseActivity() {
         button.text = getString(if (fav) R.string.favorited else R.string.favorite)
         button.setIconResource(if (fav) R.drawable.ic_heart else R.drawable.ic_heart_outline)
         button.iconTint = ColorStateList.valueOf(getColor(if (fav) R.color.heart else R.color.on_surface))
+    }
+
+    // ---- skip intro / outro, sleep timer, once-a-second housekeeping ---------------------------------------------
+
+    private val ticker = object : Runnable {
+        override fun run() {
+            tick++
+            if (sleepAtMs > 0 && SystemClock.elapsedRealtime() >= sleepAtMs) sleepNow("睡眠定时到了，已暂停")
+            val p = player
+            if (!isLive && started && p != null && !outroDone) {
+                val outro = Store.skip(key).second
+                val duration = p.duration
+                if (outro > 0 && duration > (outro + 60) * 1000L && p.currentPosition >= duration - outro * 1000L) {
+                    outroDone = true
+                    val count = details[curSrc]?.lines?.getOrNull(curLine)?.episodes?.size ?: 0
+                    if (sleepAfterEp) {
+                        sleepNow("这一集播完了，已按睡眠定时停止")
+                    } else if (curEp + 1 < count) {
+                        flashHud("已跳过片尾，播放下一集")
+                        selectEpisode(curEp + 1)
+                    }
+                }
+            }
+            if (overlay && panel?.visibility == View.VISIBLE) updateProgress()
+            // The programme guide moves on every few minutes.
+            if (isLive && started && tick % 30 == 0) setInfo(playingText())
+            handler.postDelayed(this, 1_000)
+        }
+    }
+
+    private fun skipIntro(resumed: Boolean) {
+        if (introDone) return
+        introDone = true
+        val intro = Store.skip(key).first
+        val p = player ?: return
+        if (!resumed && intro > 0 && p.duration > (intro + 60) * 1000L && p.currentPosition < intro * 1000L) {
+            Log.d("TVP", "skip intro: ${intro}s, speed ${p.playbackParameters.speed}")
+            p.seekTo(intro * 1000L)
+            flashHud("已跳过片头 $intro 秒")
+        }
+    }
+
+    private fun sleepNow(message: String) {
+        sleepAtMs = 0
+        sleepAfterEp = false
+        sleepChoice = 0
+        player?.pause()
+        stopKeepAlive()
+        flashHud(message, 4_000)
+        toast(message)
+    }
+
+    // ---- live: remembered line, channel zapping ------------------------------------------------------------------
+
+    /** A line the user once picked by hand for this channel goes first, and skips the speed test. */
+    private fun applyRememberedLine() {
+        val idx = Store.liveLine(title)?.let { liveUrls.indexOf(it) } ?: -1
+        liveStart = maxOf(idx, 0)
+        pinned = idx >= 0
+    }
+
+    private fun channelList(): List<LiveChannel> {
+        if (groupChannels.isEmpty()) groupChannels = Store.channels().filter { it.group == liveGroup }
+        return groupChannels
+    }
+
+    private fun switchChannel(delta: Int) {
+        val list = channelList()
+        if (list.size < 2) return
+        val at = list.indexOfFirst { it.name == title }.coerceAtLeast(0)
+        openChannel(list[(at + delta + list.size) % list.size], list.size, (at + delta + list.size) % list.size + 1)
+    }
+
+    private fun openChannel(channel: LiveChannel, total: Int, number: Int) {
+        probeJobs.forEach { it.cancel() } // the old channel's speed tests would only compete for bandwidth
+        probeJobs = emptyList()
+        title = channel.name
+        liveUrls = channel.urls
+        lineQuality.clear()
+        current = null
+        started = false
+        resolution = ""
+        findViewById<TextView?>(R.id.title)?.text = title
+        applyRememberedLine()
+        needWarm = true
+        refreshLists()
+        flashHud("$number/$total  ${channel.name}", 1_500)
+        playCurrent(0)
+    }
+
+    private val commitDigits = Runnable {
+        val n = digits.toIntOrNull()
+        digits = ""
+        if (n == null) return@Runnable
+        val list = channelList()
+        val target = list.firstOrNull { it.name.equals("CCTV$n", true) || it.name.equals("CCTV-$n", true) } ?: list.getOrNull(n - 1)
+        if (target == null) flashHud("没有 $n 台") else openChannel(target, list.size, list.indexOf(target) + 1)
+    }
+
+    private fun typeDigit(d: Int) {
+        if (digits.length >= 3) digits = ""
+        digits += d
+        flashHud("频道 $digits", 1_500)
+        handler.removeCallbacks(commitDigits)
+        handler.postDelayed(commitDigits, 1_500)
+    }
+
+    // ---- playback settings dialog -------------------------------------------------------------------------------
+
+    /** A − / + button: a tap is one step, holding it keeps stepping (also with the remote's OK key held). */
+    private fun stepper(button: View, step: () -> Unit) {
+        button.setOnClickListener { step() }
+        val repeat = object : Runnable {
+            override fun run() {
+                if (!button.isPressed) return
+                step()
+                handler.postDelayed(this, 120)
+            }
+        }
+        button.setOnLongClickListener {
+            handler.post(repeat)
+            true
+        }
+    }
+
+    /** One segmented row of equal-width options; [selected] < 0 leaves none picked. */
+    private fun fill(group: MaterialButtonToggleGroup, labels: List<String>, selected: Int, onPick: (Int) -> Unit) {
+        group.removeAllViews()
+        labels.forEach { label ->
+            val button = layoutInflater.inflate(R.layout.toggle_option, group, false) as MaterialButton
+            button.id = View.generateViewId()
+            button.text = label
+            group.addView(button)
+        }
+        if (selected >= 0) group.check(group.getChildAt(selected).id)
+        group.addOnButtonCheckedListener { g, id, checked ->
+            if (checked) {
+                val index = (0 until g.childCount).indexOfFirst { g.getChildAt(it).id == id }
+                if (index >= 0) onPick(index)
+            }
+        }
+    }
+
+    private fun showPlaySettings() {
+        val view = layoutInflater.inflate(R.layout.dialog_play_settings, null)
+
+        // speed (on demand only)
+        val speeds = listOf(0.75f, 1f, 1.25f, 1.5f, 2f)
+        if (isLive) view.findViewById<View>(R.id.speedBox).visibility = View.GONE else {
+            val now = player?.playbackParameters?.speed ?: Store.playSpeed()
+            fill(view.findViewById(R.id.speedGroup), speeds.map { "${it}×".replace(".0×", "×") }, speeds.indexOfFirst { abs(it - now) < 0.01f }) {
+                player?.setPlaybackSpeed(speeds[it])
+                Store.setPlaySpeed(speeds[it])
+            }
+        }
+
+        // skip intro / outro (per series)
+        if (isLive || key.isEmpty()) view.findViewById<View>(R.id.skipBox).visibility = View.GONE else {
+            var (intro, outro) = Store.skip(key)
+            val introLabel = view.findViewById<TextView>(R.id.introLabel)
+            val outroLabel = view.findViewById<TextView>(R.id.outroLabel)
+            fun update() {
+                introLabel.text = if (intro == 0) "不跳过" else "$intro 秒"
+                outroLabel.text = if (outro == 0) "不跳过" else "$outro 秒"
+                Store.setSkip(key, intro, outro)
+            }
+            update()
+            stepper(view.findViewById(R.id.introMinus)) { intro = (intro - 5).coerceAtLeast(0); update() }
+            stepper(view.findViewById(R.id.introPlus)) { intro = (intro + 5).coerceAtMost(MAX_SKIP); update() }
+            stepper(view.findViewById(R.id.outroMinus)) { outro = (outro - 5).coerceAtLeast(0); update() }
+            stepper(view.findViewById(R.id.outroPlus)) { outro = (outro + 5).coerceAtMost(MAX_SKIP); update() }
+        }
+
+        // sleep timer
+        val sleepStatus = view.findViewById<TextView>(R.id.sleepStatus)
+        fun sleepText() {
+            sleepStatus.text = when {
+                sleepAfterEp -> "播完这一集后停止"
+                sleepAtMs > 0 -> "还剩约 ${maxOf(1, (sleepAtMs - SystemClock.elapsedRealtime()) / 60_000 + 1)} 分钟后暂停"
+                else -> "未开启"
+            }
+        }
+        sleepText()
+        val sleepLabels = if (isLive) listOf("关闭", "15 分", "30 分", "60 分", "90 分") else listOf("关闭", "15 分", "30 分", "60 分", "播完本集")
+        fill(view.findViewById(R.id.sleepGroup), sleepLabels, sleepChoice) { i ->
+            sleepChoice = i
+            sleepAtMs = 0
+            sleepAfterEp = false
+            when {
+                i == 0 -> Unit
+                !isLive && i == 4 -> sleepAfterEp = true
+                else -> sleepAtMs = SystemClock.elapsedRealtime() + listOf(0, 15, 30, 60, 90)[i] * 60_000L
+            }
+            sleepText()
+        }
+
+        // leaving the app (phones and tablets)
+        val canPip = !isTv && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+        if (isTv) view.findViewById<View>(R.id.leaveBox).visibility = View.GONE else {
+            val actions = if (canPip) listOf("pause", "audio", "pip") else listOf("pause", "audio")
+            val labels = if (canPip) listOf("暂停", "后台听声音", "小窗播放") else listOf("暂停", "后台听声音")
+            fill(view.findViewById(R.id.leaveGroup), labels, actions.indexOf(Store.leaveAction()).coerceAtLeast(0)) {
+                Store.setLeaveAction(actions[it])
+                if (actions[it] == "audio" && Build.VERSION.SDK_INT >= 33 &&
+                    checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                ) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7)
+            }
+            view.findViewById<View>(R.id.pipNow).apply {
+                visibility = if (canPip) View.VISIBLE else View.GONE
+                setOnClickListener { enterPip() }
+            }
+        }
+
+        if (isTv) {
+            showSidePanel("播放设置", view)
+            return
+        }
+        // Phones and tablets: a bottom sheet, within thumb reach and over less of the picture.
+        val sheet = BottomSheetDialog(this)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(BottomSheetDragHandleView(this@PlayActivity))
+            addView(TextView(this@PlayActivity).apply {
+                text = "播放设置"
+                setTextAppearance(R.style.TextAppearance_TvPlayer_Headline)
+                setPadding(dp(24), 0, dp(24), dp(8))
+            })
+            addView(view)
+            setPadding(0, 0, 0, dp(16))
+        }
+        sheet.setContentView(box)
+        sheet.behavior.state = BottomSheetBehavior.STATE_EXPANDED
+        sheet.behavior.skipCollapsed = true
+        sheet.show()
+    }
+
+    /** The whole synopsis (the details page shows three lines). */
+    private fun showSynopsis() {
+        val d = details[curSrc] ?: return
+        if (d.content.isEmpty()) return
+        val text = TextView(this).apply {
+            text = d.content
+            setTextAppearance(R.style.TextAppearance_TvPlayer_Body)
+            setLineSpacing(0f, 1.3f)
+            setPadding(dp(24), 0, dp(24), dp(16))
+        }
+        showSidePanel(d.title.ifEmpty { title }, android.widget.ScrollView(this).apply { isFocusable = true; addView(text) }, scrollOnly = true)
+    }
+
+    /** TV: a full-height panel on the right; the picture stays visible on the left. Back closes it. */
+    private fun showSidePanel(title: String, content: View, scrollOnly: Boolean = false) {
+        val dialog = android.app.Dialog(this, R.style.Theme_TvPlayer_SidePanel)
+        // With buttons inside, the scroll container must not take focus (it would draw a highlight); with plain text
+        // ([scrollOnly]) it has to, or the remote could not scroll it.
+        if (!scrollOnly) (content as? ViewGroup)?.apply {
+            isFocusable = false
+            descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
+        }
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(27), dp(24), dp(27)) // TV overscan safe area on the top, right and bottom
+            addView(TextView(this@PlayActivity).apply {
+                text = title
+                setTextAppearance(R.style.TextAppearance_TvPlayer_Headline)
+                setPadding(dp(24), 0, dp(24), dp(12))
+            })
+            addView(content, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        }
+        dialog.setContentView(root)
+        dialog.window?.apply {
+            setGravity(Gravity.END)
+            setLayout(dp(420), ViewGroup.LayoutParams.MATCH_PARENT)
+            // Full height like the picture behind it: no strip left where the hidden status bar would be.
+            WindowCompat.getInsetsController(this, decorView).apply {
+                systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                hide(WindowInsetsCompat.Type.systemBars())
+            }
+            attributes = attributes.also { it.layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS }
+        }
+        dialog.setOnShowListener {
+            // Start on the first option so the remote is immediately useful.
+            content.focusSearch(View.FOCUS_DOWN)?.requestFocus() ?: content.requestFocus()
+        }
+        dialog.show()
+    }
+
+    /** Only when it was started: stopService is a call into the system, not free on every resume. */
+    private fun stopKeepAlive() {
+        KeepAliveService.onStop = null
+        if (!keepAlive) return
+        keepAlive = false
+        KeepAliveService.stop(this)
+    }
+
+    // ---- picture in picture / background sound -------------------------------------------------------------------
+
+    private fun enterPip(): Boolean {
+        if (isTv || !packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return false
+        pipRequested = true
+        return try {
+            enterPictureInPictureMode(PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build()).also { if (!it) pipRequested = false }
+        } catch (e: Exception) {
+            Log.d("TVP", "pip failed: $e")
+            pipRequested = false
+            false
+        }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        leaving = true
+        if (Store.leaveAction() == "pip" && player?.isPlaying == true) enterPip()
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        pipRequested = isInPictureInPictureMode
+        applyPip(isInPictureInPictureMode)
+    }
+
+    /** In the small floating window only the picture is left. */
+    private fun applyPip(inPip: Boolean) {
+        val gone = if (inPip) View.GONE else View.VISIBLE
+        for (id in listOf(R.id.topbar, R.id.content, R.id.back, R.id.cast, R.id.playSettings)) findViewById<View?>(id)?.visibility = gone
+        playerView.useController = !inPip
+        if (inPip) playerView.hideController()
+    }
+
+    private fun setVideoEnabled(enabled: Boolean) {
+        val p = player ?: return
+        p.trackSelectionParameters = p.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, !enabled).build()
     }
 
     // ---- DLNA casting --------------------------------------------------------------------------------------------
@@ -680,33 +1264,92 @@ class PlayActivity : BaseActivity() {
 
     private val hideHud = Runnable { hud?.visibility = View.GONE }
 
-    private fun flashHud(text: String) {
+    private fun flashHud(text: String, ms: Long = 900) {
         hud?.apply {
             this.text = text
             visibility = View.VISIBLE
         }
         handler.removeCallbacks(hideHud)
-        handler.postDelayed(hideHud, 900)
+        handler.postDelayed(hideHud, ms)
     }
 
     /** With the picture focused and the controller hidden: left/right seek 10s, up/down jump to the side panel. */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (isTv && event.action == KeyEvent.ACTION_DOWN && playerView.hasFocus() && !playerView.isControllerFullyVisible) {
+        // Remote media keys (the picture has no on-screen controller to forward them).
+        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+            val p = player
             when (event.keyCode) {
-                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> if (!isLive) {
-                    player?.let { p ->
-                        val delta = if (event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) 10_000L else -10_000L
-                        val target = (p.currentPosition + delta).coerceIn(0L, maxOf(0L, p.duration))
+                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_HEADSETHOOK -> { p?.let { if (it.isPlaying) it.pause() else it.play() }; return true }
+                KeyEvent.KEYCODE_MEDIA_PLAY -> { p?.play(); return true }
+                KeyEvent.KEYCODE_MEDIA_PAUSE -> { p?.pause(); return true }
+                KeyEvent.KEYCODE_MEDIA_FAST_FORWARD, KeyEvent.KEYCODE_MEDIA_REWIND -> {
+                    if (!isLive && p != null && p.duration > 0) {
+                        val delta = if (event.keyCode == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD) 30_000L else -30_000L
+                        val target = (p.currentPosition + delta).coerceIn(0L, p.duration)
                         p.seekTo(target)
-                        playerView.hideController()
-                        flashHud(if (delta > 0) "快进 10 秒  ${formatTime(target)}" else "快退 10 秒  ${formatTime(target)}")
+                        flashHud(if (delta > 0) "快进 30 秒  ${formatTime(target)}" else "快退 30 秒  ${formatTime(target)}")
                     }
                     return true
                 }
-                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> if (panel?.visibility == View.VISIBLE) {
-                    val first = favoriteBtn?.takeIf { it.visibility == View.VISIBLE } ?: findViewById(R.id.cast)
-                    first.requestFocus()
+            }
+        }
+        // Live: channel keys and number keys work from anywhere.
+        if (isLive && event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+            val code = event.keyCode
+            when {
+                code == KeyEvent.KEYCODE_CHANNEL_UP -> { switchChannel(1); return true }
+                code == KeyEvent.KEYCODE_CHANNEL_DOWN -> { switchChannel(-1); return true }
+                code in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9 -> { typeDigit(code - KeyEvent.KEYCODE_0); return true }
+                code in KeyEvent.KEYCODE_NUMPAD_0..KeyEvent.KEYCODE_NUMPAD_9 -> { typeDigit(code - KeyEvent.KEYCODE_NUMPAD_0); return true }
+            }
+        }
+        if (overlay && event.action == KeyEvent.ACTION_DOWN) {
+            if (panel?.visibility == View.VISIBLE) {
+                bumpPanel() // the user is using the bar: keep it up
+            } else {
+                val show = when (event.keyCode) {
+                    KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_MENU -> true
+                    KeyEvent.KEYCODE_DPAD_DOWN -> !isLive // live: down is the previous channel
+                    else -> false
+                }
+                if (show) {
+                    setPanelVisible(true)
                     return true
+                }
+            }
+        }
+        // With the TV bar hidden the picture is all there is, whatever currently holds focus.
+        val onPicture = playerView.hasFocus() || (overlay && panel?.visibility != View.VISIBLE)
+        if (overlay && event.action == KeyEvent.ACTION_DOWN && onPicture && !playerView.isControllerFullyVisible) {
+            val toPanel = {
+                listOfNotNull(favoriteBtn, findViewById(R.id.cast), findViewById(R.id.playSettings))
+                    .firstOrNull { it.visibility == View.VISIBLE }?.requestFocus()
+            }
+            when (event.keyCode) {
+                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                    if (!isLive) {
+                        player?.takeIf { it.duration > 0 }?.let { p ->
+                            val delta = if (event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) 10_000L else -10_000L
+                            val target = (p.currentPosition + delta).coerceIn(0L, maxOf(0L, p.duration))
+                            p.seekTo(target)
+                            playerView.hideController()
+                            flashHud(if (delta > 0) "快进 10 秒  ${formatTime(target)}" else "快退 10 秒  ${formatTime(target)}")
+                        }
+                        return true
+                    } else if (event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT && !overlay && panel?.visibility == View.VISIBLE) {
+                        toPanel()
+                        return true
+                    }
+                }
+                // Live: up / down change channel (the panel is one press of right away); on demand they jump to the panel.
+                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> {
+                    if (isLive) {
+                        if (event.repeatCount == 0) switchChannel(if (event.keyCode == KeyEvent.KEYCODE_DPAD_UP) 1 else -1)
+                        return true
+                    } else if (panel?.visibility == View.VISIBLE) {
+                        toPanel()
+                        return true
+                    }
                 }
             }
         }
@@ -734,7 +1377,6 @@ class PlayActivity : BaseActivity() {
         var seekTarget = 0L
         var startBrightness = 0f
         var startVolume = 0
-        var speedUp = false
 
         val detector = GestureDetector(
             this,
@@ -753,8 +1395,8 @@ class PlayActivity : BaseActivity() {
 
                 override fun onLongPress(e: MotionEvent) {
                     if (isLive) return
+                    speedBoost = true
                     player?.setPlaybackSpeed(2f)
-                    speedUp = true
                     label.text = "2× 倍速"
                     label.visibility = View.VISIBLE
                 }
@@ -805,9 +1447,9 @@ class PlayActivity : BaseActivity() {
             detector.onTouchEvent(event)
             if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
                 if (mode == 1 && event.actionMasked == MotionEvent.ACTION_UP) player?.seekTo(seekTarget)
-                if (speedUp) {
-                    player?.setPlaybackSpeed(1f)
-                    speedUp = false
+                if (speedBoost) {
+                    player?.setPlaybackSpeed(Store.playSpeed())
+                    speedBoost = false
                 }
                 mode = 0
                 label.visibility = View.GONE
@@ -836,18 +1478,59 @@ class PlayActivity : BaseActivity() {
 
     override fun onResume() {
         super.onResume()
+        leaving = false
+        stopKeepAlive()
         handler.postDelayed(saver, SAVE_MS)
         updateFavorite()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (videoOff) {
+            videoOff = false
+            setVideoEnabled(true)
+        }
     }
 
     override fun onPause() {
         super.onPause()
         handler.removeCallbacks(saver)
         saveProgress()
-        player?.pause()
+        val inPip = pipRequested || isInPictureInPictureMode
+        val audio = !isTv && !inPip && !isFinishing && !isChangingConfigurations && Store.leaveAction() == "audio" && player?.isPlaying == true
+        if (audio) {
+            // A dialog in front (e.g. the notification permission prompt) keeps playing without the notification;
+            // only really leaving (Home, recents, screen off) needs the foreground service.
+            if (leaving || !getSystemService(PowerManager::class.java).isInteractive) {
+                KeepAliveService.onStop = {
+                    runOnUiThread {
+                        player?.pause()
+                        finish()
+                    }
+                }
+                KeepAliveService.start(this, title)
+                keepAlive = true
+            }
+        } else if (!inPip) {
+            player?.pause()
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (isInPictureInPictureMode && getSystemService(PowerManager::class.java).isInteractive) {
+            // The floating window was closed (a screen turning off also stops the activity; that is not a close).
+            player?.pause()
+            finishAndRemoveTask()
+        } else if (player?.isPlaying == true && !isFinishing) {
+            // Still playing with the screen gone: only the sound; drop the picture to save data and decoding.
+            videoOff = true
+            setVideoEnabled(false)
+        }
     }
 
     override fun onDestroy() {
+        stopKeepAlive()
         playJob?.cancel()
         handler.removeCallbacksAndMessages(null)
         player?.release()

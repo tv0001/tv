@@ -1,0 +1,151 @@
+package com.tv.player.core
+
+import kotlinx.coroutines.runBlocking
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
+import java.net.Inet4Address
+import java.net.InetSocketAddress
+import java.net.NetworkInterface
+import java.net.ServerSocket
+import java.net.Socket
+import java.net.URLDecoder
+import java.security.SecureRandom
+import java.util.concurrent.Executors
+
+/**
+ * A tiny web page on the local network so a phone can type for the TV: a search word, a VOD source address or a
+ * live list address. Only runs while its dialog is open, and every request must carry the random token from the QR code.
+ */
+class PhoneServer(private val listener: Listener) {
+    interface Listener {
+        fun onSearch(keyword: String)
+
+        /** Returns the message shown on the phone. */
+        suspend fun onVod(name: String, api: String): String
+
+        suspend fun onLive(name: String, url: String): String
+    }
+
+    val token: String = SecureRandom().let { r -> (1..8).map { "abcdefghijkmnpqrstuvwxyz23456789"[r.nextInt(32)] }.joinToString("") }
+    private var socket: ServerSocket? = null
+    private val pool = Executors.newCachedThreadPool()
+
+    val port get() = socket?.localPort ?: 0
+
+    fun start(): Boolean {
+        return try {
+            val s = ServerSocket()
+            s.reuseAddress = true
+            s.bind(InetSocketAddress(0))
+            socket = s
+            pool.execute {
+                while (!s.isClosed) {
+                    val c = try { s.accept() } catch (e: Exception) { break }
+                    pool.execute { runCatching { serve(c) } }
+                }
+            }
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    fun stop() {
+        runCatching { socket?.close() }
+        pool.shutdownNow()
+    }
+
+    /** The address a phone on the same Wi-Fi can open, or null when there is no local network. */
+    fun url(): String? {
+        val ip = localIp() ?: return null
+        return "http://$ip:$port/$token/"
+    }
+
+    private fun localIp(): String? = try {
+        NetworkInterface.getNetworkInterfaces().toList()
+            .filter { it.isUp && !it.isLoopback }
+            .sortedBy { if (it.name.startsWith("wlan") || it.name.startsWith("eth")) 0 else 1 }
+            .flatMap { it.inetAddresses.toList() }
+            .firstOrNull { it is Inet4Address && it.isSiteLocalAddress }?.hostAddress
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun serve(c: Socket) = c.use { sock ->
+        sock.soTimeout = 10_000
+        val input = sock.getInputStream()
+        val head = readHead(input) ?: return
+        val lines = head.split("\r\n")
+        val (method, rawPath) = lines[0].split(' ').let { (it.getOrNull(0) ?: "") to (it.getOrNull(1) ?: "") }
+        val length = lines.firstOrNull { it.startsWith("Content-Length:", true) }?.substringAfter(':')?.trim()?.toIntOrNull() ?: 0
+        val body = if (length in 1..65536) String(readBytes(input, length), Charsets.UTF_8) else ""
+        val path = rawPath.substringBefore('?')
+        val out = sock.getOutputStream()
+        if (!path.startsWith("/$token/") && path != "/$token") {
+            respond(out, 404, page("不对", "<p>这个地址已失效，请在电视上重新扫码。</p>"))
+            return
+        }
+        val action = path.removePrefix("/$token").trim('/')
+        if (method == "GET" || action.isEmpty()) {
+            respond(out, 200, form())
+            return
+        }
+        val f = body.split('&').associate {
+            val kv = it.split('=', limit = 2)
+            URLDecoder.decode(kv[0], "UTF-8") to URLDecoder.decode(kv.getOrElse(1) { "" }, "UTF-8").trim()
+        }
+        val message = when (action) {
+            "search" -> if (f["q"].isNullOrEmpty()) "没有输入内容" else { listener.onSearch(f["q"]!!); "已发送，电视正在搜索「${f["q"]}」" }
+            "vod" -> runBlocking { listener.onVod(f["name"].orEmpty(), f["api"].orEmpty()) }
+            "live" -> runBlocking { listener.onLive(f["name"].orEmpty(), f["url"].orEmpty()) }
+            else -> "未知操作"
+        }
+        respond(out, 200, page("结果", "<p>${esc(message)}</p><p><a href=\"/$token/\">返回继续输入</a></p>"))
+    }
+
+    private fun readHead(input: InputStream): String? {
+        val buf = ByteArrayOutputStream()
+        var matched = 0
+        while (buf.size() < 16384) {
+            val b = input.read()
+            if (b < 0) return null
+            buf.write(b)
+            matched = if (b == "\r\n\r\n"[matched].code) matched + 1 else if (b == '\r'.code) 1 else 0
+            if (matched == 4) return String(buf.toByteArray(), Charsets.ISO_8859_1).dropLast(4)
+        }
+        return null
+    }
+
+    private fun readBytes(input: InputStream, n: Int): ByteArray {
+        val out = ByteArray(n)
+        var read = 0
+        while (read < n) {
+            val k = input.read(out, read, n - read)
+            if (k < 0) break
+            read += k
+        }
+        return out.copyOf(read)
+    }
+
+    private fun respond(out: java.io.OutputStream, code: Int, html: String) {
+        val bytes = html.toByteArray(Charsets.UTF_8)
+        out.write("HTTP/1.1 $code OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n".toByteArray())
+        out.write(bytes)
+        out.flush()
+    }
+
+    private fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    private fun page(title: String, body: String) = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>$title</title><style>body{font-family:-apple-system,sans-serif;background:#0E1015;color:#E8EAF0;margin:0;padding:16px}
+h1{font-size:20px}.card{background:#161923;border-radius:14px;padding:14px;margin:14px 0}h2{font-size:15px;color:#6EA8FF;margin:0 0 8px}
+input{width:100%;box-sizing:border-box;padding:12px;margin:5px 0;border-radius:10px;border:1px solid #363C50;background:#0E1015;color:#E8EAF0;font-size:16px}
+button{width:100%;padding:12px;margin-top:6px;border:0;border-radius:10px;background:#6EA8FF;color:#00224D;font-size:16px;font-weight:600}a{color:#6EA8FF}p{line-height:1.6}small{color:#A4ABBD}</style></head><body><h1>$title</h1>$body</body></html>"""
+
+    private fun form() = page(
+        "给电视发送",
+        """<div class="card"><h2>搜索</h2><form method="post" action="search"><input name="q" placeholder="片名，电视上直接开始搜索"><button>在电视上搜索</button></form></div>
+<div class="card"><h2>添加点播源</h2><form method="post" action="vod"><input name="name" placeholder="名称（可不填）"><input name="api" placeholder="接口地址 http(s)://…/api.php/provide/vod"><button>检测并添加</button></form><small>添加前会真实搜索一次，通过才会加入。</small></div>
+<div class="card"><h2>添加直播源</h2><form method="post" action="live"><input name="name" placeholder="名称（可不填）"><input name="url" placeholder="直播列表地址（TXT 或 M3U）"><button>下载并添加</button></form></div>""",
+    )
+}

@@ -5,7 +5,70 @@
    "name": "最大资源",
    "type": 1,
    "api": "https://api.zuidapi.com/api.php/provide/vod",
-   "ms": 862,
+   "ms": 918,
+   "count": 20,
+   "from": "cms-candidates.tsv"
+  },
+  {
+   "key": "https://api.wujinapi.com/api.php/provide/vod",
+   "name": "无尽影视",
+   "type": 1,
+   "api": "https://api.wujinapi.com/api.php/provide/vod",
+   "ms": 932,
+   "count": 20,
+   "from": "cms-candidates.tsv"
+  },
+  {
+   "key": "https://hhzyapi.com/api.php/provide/vod",
+   "name": "豪华资源",
+   "type": 1,
+   "api": "https://hhzyapi.com/api.php/provide/vod",
+   "ms": 1123,
+   "count": 20,
+   "from": "cms-candidates.tsv"
+  },
+  {
+   "key": "https://www.mdzyapi.com/api.php/provide/vod",
+   "name": "魔都资源",
+   "type": 1,
+   "api": "https://www.mdzyapi.com/api.php/provide/vod",
+   "ms": 1200,
+   "count": 20,
+   "from": "cms-candidates.tsv"
+  },
+  {
+   "key": "https://jyzyapi.com/provide/vod/from/jinyingyun/at/json",
+   "name": "金鹰点播",
+   "type": 1,
+   "api": "https://jyzyapi.com/provide/vod/from/jinyingyun/at/json",
+   "ms": 1203,
+   "count": 20,
+   "from": "cms-candidates.tsv"
+  },
+  {
+   "key": "https://subocaiji.com/api.php/provide/vod",
+   "name": "速博资源",
+   "type": 1,
+   "api": "https://subocaiji.com/api.php/provide/vod/",
+   "ms": 1250,
+   "count": 20,
+   "from": "cms-candidates.tsv"
+  },
+  {
+   "key": "https://jszyapi.com/api.php/provide/vod",
+   "name": "极速资源",
+   "type": 1,
+   "api": "https://jszyapi.com/api.php/provide/vod/",
+   "ms": 1280,
+   "count": 20,
+   "from": "cms-candidates.tsv"
+  },
+  {
+   "key": "https://360zy.com/api.php/provide/vod",
+   "name": "360资源",
+   "type": 1,
+   "api": "https://360zy.com/api.php/provide/vod",
+   "ms": 1318,
    "count": 20,
    "from": "cms-candidates.tsv"
   },
@@ -14,53 +77,8 @@
    "name": "森林资源",
    "type": 1,
    "api": "https://slapibf.com/api.php/provide/vod",
-   "ms": 974,
+   "ms": 1346,
    "count": 10,
-   "from": "cms-candidates.tsv"
-  },
-  {
-   "key": "https://www.hongniuzy2.com/api.php/provide/vod",
-   "name": "红牛资源",
-   "type": 1,
-   "api": "https://www.hongniuzy2.com/api.php/provide/vod/",
-   "ms": 980,
-   "count": 20,
-   "from": "cms-candidates.tsv"
-  },
-  {
-   "key": "https://ikunzyapi.com/api.php/provide/vod",
-   "name": "IK资源",
-   "type": 1,
-   "api": "https://ikunzyapi.com/api.php/provide/vod/",
-   "ms": 1052,
-   "count": 20,
-   "from": "cms-candidates.tsv"
-  },
-  {
-   "key": "https://api.guangsuapi.com/api.php/provide/vod",
-   "name": "光速资源",
-   "type": 1,
-   "api": "https://api.guangsuapi.com/api.php/provide/vod/",
-   "ms": 1076,
-   "count": 20,
-   "from": "cms-candidates.tsv"
-  },
-  {
-   "key": "http://154.219.117.232:9981/jacloudapi.php/provide/vod",
-   "name": "建安",
-   "type": 1,
-   "api": "http://154.219.117.232:9981/jacloudapi.php/provide/vod",
-   "ms": 1120,
-   "count": 20,
-   "from": "qist jsm"
-  },
-  {
-   "key": "https://subocaiji.com/api.php/provide/vod",
-   "name": "速博资源",
-   "type": 1,
-   "api": "https://subocaiji.com/api.php/provide/vod/",
-   "ms": 1142,
-   "count": 20,
    "from": "cms-candidates.tsv"
   },
   {
@@ -68,79 +86,124 @@
    "name": "百度云资源",
    "type": 1,
    "api": "https://api.apibdzy.com/api.php/provide/vod",
-   "ms": 1196,
+   "ms": 1431,
    "count": 20,
    "from": "cms-candidates.tsv"
   },
   {
-   "key": "https://jszyapi.com/api.php/provide/vod/?ac=list",
-   "name": "极速",
+   "key": "https://bfzyapi.com/api.php/provide/vod",
+   "name": "暴风",
    "type": 1,
-   "api": "https://jszyapi.com/api.php/provide/vod/?ac=list",
-   "ms": 1257,
+   "api": "https://bfzyapi.com/api.php/provide/vod",
+   "ms": 1446,
+   "count": 20,
+   "from": "Ray"
+  },
+  {
+   "key": "https://api.guangsuapi.com/api.php/provide/vod",
+   "name": "光速资源",
+   "type": 1,
+   "api": "https://api.guangsuapi.com/api.php/provide/vod/",
+   "ms": 1450,
+   "count": 20,
+   "from": "cms-candidates.tsv"
+  },
+  {
+   "key": "https://api.ukuapi88.com/api.php/provide/vod",
+   "name": "U酷影视",
+   "type": 1,
+   "api": "https://api.ukuapi88.com/api.php/provide/vod",
+   "ms": 1466,
+   "count": 20,
+   "from": "cms-candidates.tsv"
+  },
+  {
+   "key": "https://api.maoyanapi.top/api.php/provide/vod",
+   "name": "猫眼资源",
+   "type": 1,
+   "api": "https://api.maoyanapi.top/api.php/provide/vod",
+   "ms": 1559,
+   "count": 30,
+   "from": "cms-candidates.tsv"
+  },
+  {
+   "key": "https://ikunzyapi.com/api.php/provide/vod/from/ikm3u8",
+   "name": "IK",
+   "type": 1,
+   "api": "https://ikunzyapi.com/api.php/provide/vod/from/ikm3u8/",
+   "ms": 1562,
+   "count": 20,
+   "from": "Ray"
+  },
+  {
+   "key": "http://154.219.117.232:9981/jacloudapi.php/provide/vod",
+   "name": "建安",
+   "type": 1,
+   "api": "http://154.219.117.232:9981/jacloudapi.php/provide/vod",
+   "ms": 1631,
    "count": 20,
    "from": "qist jsm"
-  },
-  {
-   "key": "https://bfzyapi.com/api.php/provide/vod/?ac=list",
-   "name": "暴風",
-   "type": 1,
-   "api": "https://bfzyapi.com/api.php/provide/vod/?ac=list",
-   "ms": 1362,
-   "count": 20,
-   "from": "qist jsm"
-  },
-  {
-   "key": "https://www.huyaapi.com/api.php/provide/vod",
-   "name": "虎牙资源",
-   "type": 1,
-   "api": "https://www.huyaapi.com/api.php/provide/vod/",
-   "ms": 1383,
-   "count": 20,
-   "from": "cms-candidates.tsv"
-  },
-  {
-   "key": "https://cj.lziapi.com/api.php/provide/vod",
-   "name": "量子",
-   "type": 1,
-   "api": "https://cj.lziapi.com/api.php/provide/vod/",
-   "ms": 1569,
-   "count": 20,
-   "from": "qist jsm"
-  },
-  {
-   "key": "https://360zy.com/api.php/provide/vod",
-   "name": "360资源",
-   "type": 1,
-   "api": "https://360zy.com/api.php/provide/vod",
-   "ms": 1581,
-   "count": 20,
-   "from": "cms-candidates.tsv"
-  },
-  {
-   "key": "https://caiji.moduapi.cc/api.php/provide/vod",
-   "name": "魔都资源",
-   "type": 1,
-   "api": "https://caiji.moduapi.cc/api.php/provide/vod/",
-   "ms": 1620,
-   "count": 20,
-   "from": "cms-candidates.tsv"
-  },
-  {
-   "key": "https://api.ukuapi.com/api.php/provide/vod",
-   "name": "尤酷资源",
-   "type": 1,
-   "api": "https://api.ukuapi.com/api.php/provide/vod/",
-   "ms": 1663,
-   "count": 20,
-   "from": "cms-candidates.tsv"
   },
   {
    "key": "https://api.xinlangapi.com/xinlangapi.php/provide/vod",
    "name": "新浪资源",
    "type": 1,
    "api": "https://api.xinlangapi.com/xinlangapi.php/provide/vod/",
-   "ms": 1927,
+   "ms": 1632,
+   "count": 20,
+   "from": "cms-candidates.tsv"
+  },
+  {
+   "key": "https://cj.lzcaiji.com/api.php/provide/vod",
+   "name": "量子资源",
+   "type": 1,
+   "api": "https://cj.lzcaiji.com/api.php/provide/vod",
+   "ms": 1668,
+   "count": 20,
+   "from": "cms-candidates.tsv"
+  },
+  {
+   "key": "https://iqiyizyapi.com/api.php/provide/vod",
+   "name": "爱奇艺资源",
+   "type": 1,
+   "api": "https://iqiyizyapi.com/api.php/provide/vod",
+   "ms": 1870,
+   "count": 20,
+   "from": "cms-candidates.tsv"
+  },
+  {
+   "key": "https://api.ukuapi.com/api.php/provide/vod/?ac=list",
+   "name": "尤酷",
+   "type": 1,
+   "api": "https://api.ukuapi.com/api.php/provide/vod/?ac=list",
+   "ms": 1874,
+   "count": 20,
+   "from": "qist jsm"
+  },
+  {
+   "key": "https://www.hongniuzy2.com/api.php/provide/vod",
+   "name": "红牛资源",
+   "type": 1,
+   "api": "https://www.hongniuzy2.com/api.php/provide/vod/",
+   "ms": 1883,
+   "count": 20,
+   "from": "cms-candidates.tsv"
+  },
+  {
+   "key": "https://api.yzzy-api.com/inc/apijson.php",
+   "name": "优质资源",
+   "type": 1,
+   "api": "https://api.yzzy-api.com/inc/apijson.php",
+   "ms": 1911,
+   "count": 20,
+   "from": "cms-candidates.tsv"
+  },
+  {
+   "key": "https://360zyzz.com/api.php/provide/vod",
+   "name": "360 资源",
+   "type": 1,
+   "api": "https://360zyzz.com/api.php/provide/vod",
+   "ms": 1952,
    "count": 20,
    "from": "cms-candidates.tsv"
   },
@@ -149,7 +212,25 @@
    "name": "非凡资源2",
    "type": 1,
    "api": "https://cj.ffzyapi.com/api.php/provide/vod/",
-   "ms": 1996,
+   "ms": 2387,
+   "count": 20,
+   "from": "cms-candidates.tsv"
+  },
+  {
+   "key": "https://cj.rycjapi.com/api.php/provide/vod",
+   "name": "如意资源",
+   "type": 1,
+   "api": "https://cj.rycjapi.com/api.php/provide/vod",
+   "ms": 2723,
+   "count": 20,
+   "from": "cms-candidates.tsv"
+  },
+  {
+   "key": "https://www.huyaapi.com/api.php/provide/vod",
+   "name": "虎牙资源",
+   "type": 1,
+   "api": "https://www.huyaapi.com/api.php/provide/vod/",
+   "ms": 3710,
    "count": 20,
    "from": "cms-candidates.tsv"
   }

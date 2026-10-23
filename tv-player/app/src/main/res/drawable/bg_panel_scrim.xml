@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Under the TV control bar: clear at the top so the picture shows through, dark where the text sits. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <gradient
+        android:angle="90"
+        android:centerColor="#CC0B0D12"
+        android:endColor="#000B0D12"
+        android:startColor="#F20B0D12" />
+</shape>

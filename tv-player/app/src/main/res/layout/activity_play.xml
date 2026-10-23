@@ -32,7 +32,7 @@
             android:ellipsize="end"
             android:maxLines="1"
             android:paddingEnd="16dp"
-            android:textAppearance="?attr/textAppearanceTitleMedium" />
+            android:textAppearance="@style/TextAppearance.TvPlayer.ItemTitle" />
 
     </LinearLayout>
 
@@ -50,6 +50,7 @@
         app:use_controller="true" />
 
     <LinearLayout
+        android:id="@+id/content"
         android:layout_width="0dp"
         android:layout_height="0dp"
         android:orientation="vertical"
@@ -65,8 +66,8 @@
             android:paddingStart="16dp"
             android:paddingTop="8dp"
             android:paddingEnd="16dp"
-            android:textAppearance="?attr/textAppearanceBodyMedium"
-            android:textColor="@color/accent" />
+            android:textAppearance="@style/TextAppearance.TvPlayer.Body"
+            android:textColor="@color/on_surface_variant" />
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -78,7 +79,7 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/favorite"
-                style="@style/Widget.Material3.Button.TonalButton"
+                style="@style/Widget.TvPlayer.Action"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
@@ -87,13 +88,21 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/cast"
-                style="@style/Widget.Material3.Button.TonalButton"
+                style="@style/Widget.TvPlayer.Action"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
                 android:layout_weight="1"
                 android:text="@string/cast"
                 app:icon="@drawable/ic_cast" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/playSettings"
+                style="@style/Widget.TvPlayer.Action"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="设置"
+                app:icon="@drawable/ic_settings" />
 
         </LinearLayout>
 

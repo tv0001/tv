@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Over the blurred backdrop: lighter at the top so the poster colour shows, solid towards the episode rows. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <gradient
+        android:angle="270"
+        android:centerColor="#CC0E1015"
+        android:endColor="#F20E1015"
+        android:startColor="#660E1015" />
+</shape>

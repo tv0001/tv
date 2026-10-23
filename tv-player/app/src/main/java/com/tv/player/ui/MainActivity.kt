@@ -9,6 +9,7 @@ import com.google.android.material.navigation.NavigationBarView
 import com.tv.player.R
 import com.tv.player.core.AppUpdate
 import com.tv.player.core.Store
+import com.tv.player.core.Tracker
 import com.tv.player.core.Updater
 import kotlinx.coroutines.launch
 
@@ -19,6 +20,8 @@ class MainActivity : BaseActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(if (useSideNav()) R.layout.activity_main_tv else R.layout.activity_main)
+        // TV sets can crop the picture edges (overscan): keep content inside the 5% safe area.
+        if (isTv()) findViewById<android.view.ViewGroup>(android.R.id.content).getChildAt(0).setPadding(dp(24), dp(27), dp(48), dp(27))
 
         val fm = supportFragmentManager
         if (savedInstanceState == null) {
@@ -48,6 +51,10 @@ class MainActivity : BaseActivity() {
             if (nav.selectedItemId != R.id.nav_search) nav.selectedItemId = R.id.nav_search else finish()
         }
 
+        lifecycleScope.launch {
+            if (Tracker.due()) Tracker.check()
+            updateMineBadge()
+        }
         if (Store.isStale()) lifecycleScope.launch { Updater.update(Store.baseUrl(), auto = true) }
         if (Store.updateCheckDue()) {
             lifecycleScope.launch {
@@ -62,5 +69,19 @@ class MainActivity : BaseActivity() {
     override fun onResume() {
         super.onResume()
         UpdateUi.resume(this)
+        updateMineBadge()
+    }
+
+    /** A keyword typed on the phone while another tab is showing: go to the search tab and run it. */
+    fun pushSearch(keyword: String) {
+        findViewById<NavigationBarView>(R.id.nav).selectedItemId = R.id.nav_search
+        (supportFragmentManager.findFragmentByTag("search") as? SearchFragment)?.runSearch(keyword)
+    }
+
+    /** A number on the "我的" tab: favorites that got new episodes. */
+    fun updateMineBadge() {
+        val nav = findViewById<NavigationBarView>(R.id.nav) ?: return
+        val n = Tracker.newCount()
+        if (n > 0) nav.getOrCreateBadge(R.id.nav_mine).apply { number = n; isVisible = true } else nav.removeBadge(R.id.nav_mine)
     }
 }

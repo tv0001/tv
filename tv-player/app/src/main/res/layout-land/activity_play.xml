@@ -33,4 +33,15 @@
         android:contentDescription="@string/cast"
         android:src="@drawable/ic_cast" />
 
+    <ImageButton
+        android:id="@+id/playSettings"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="12dp"
+        android:layout_marginEnd="68dp"
+        android:background="@drawable/bg_overlay_button"
+        android:contentDescription="播放设置"
+        android:src="@drawable/ic_settings" />
+
 </FrameLayout>

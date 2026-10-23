@@ -12,24 +12,38 @@ data class VodItem(
     val title: String,
     val pic: String,
     val remarks: String,
+    val year: String = "",
+    val kind: String = "",
 )
 
 data class Episode(val name: String, val url: String)
 
 data class PlayLine(val name: String, val episodes: List<Episode>)
 
-data class VodDetail(val title: String, val pic: String, val lines: List<PlayLine>)
+data class VodDetail(
+    val title: String,
+    val pic: String,
+    val lines: List<PlayLine>,
+    val year: String = "",
+    val area: String = "",
+    val type: String = "",
+    val remarks: String = "",
+    val director: String = "",
+    val actor: String = "",
+    val content: String = "",
+    val score: String = "",
+)
 
 data class LiveChannel(val name: String, val group: String, val urls: List<String>)
 
 /** Same title from one or more sources. */
-data class VodGroup(val key: String, val title: String, val pic: String, val remarks: String, val items: List<VodItem>)
+data class VodGroup(val key: String, val title: String, val pic: String, val remarks: String, val items: List<VodItem>, val badge: String = "")
 
 fun List<VodItem>.toJsonString(): String = JSONArray().also { arr ->
     for (i in this) arr.put(
         JSONObject()
             .put("sk", i.sourceKey).put("sn", i.sourceName).put("id", i.id)
-            .put("t", i.title).put("p", i.pic).put("r", i.remarks),
+            .put("t", i.title).put("p", i.pic).put("r", i.remarks).put("y", i.year).put("k", i.kind),
     )
 }.toString()
 
@@ -37,6 +51,6 @@ fun vodItemsFromJson(text: String): List<VodItem> {
     val arr = JSONArray(text)
     return (0 until arr.length()).map {
         val o = arr.getJSONObject(it)
-        VodItem(o.getString("sk"), o.getString("sn"), o.getString("id"), o.getString("t"), o.optString("p"), o.optString("r"))
+        VodItem(o.getString("sk"), o.getString("sn"), o.getString("id"), o.getString("t"), o.optString("p"), o.optString("r"), o.optString("y"), o.optString("k"))
     }
 }

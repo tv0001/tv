@@ -32,7 +32,7 @@
             android:layout_height="wrap_content"
             android:ellipsize="end"
             android:maxLines="2"
-            android:textAppearance="?attr/textAppearanceHeadlineSmall"
+            android:textAppearance="@style/TextAppearance.TvPlayer.Headline"
             android:textStyle="bold" />
 
         <TextView
@@ -40,12 +40,12 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:paddingTop="8dp"
-            android:textAppearance="?attr/textAppearanceBodyMedium"
-            android:textColor="@color/accent" />
+            android:textAppearance="@style/TextAppearance.TvPlayer.Body"
+            android:textColor="@color/on_surface_variant" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/favorite"
-            style="@style/Widget.Material3.Button.TonalButton"
+            style="@style/Widget.TvPlayer.TonalButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
@@ -54,12 +54,21 @@
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/cast"
-            style="@style/Widget.Material3.Button.TonalButton"
+            style="@style/Widget.TvPlayer.TonalButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:text="@string/cast"
             app:icon="@drawable/ic_cast" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/playSettings"
+            style="@style/Widget.TvPlayer.TonalButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="播放设置"
+            app:icon="@drawable/ic_settings" />
 
         <TextView
             android:layout_width="wrap_content"

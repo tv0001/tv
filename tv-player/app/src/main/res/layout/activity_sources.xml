@@ -30,7 +30,7 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:text="源管理"
-                android:textAppearance="?attr/textAppearanceTitleLarge" />
+                android:textAppearance="@style/TextAppearance.TvPlayer.Headline" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/testAll"
@@ -51,7 +51,7 @@
 
             <com.google.android.material.chip.Chip
                 android:id="@+id/chipVod"
-                style="@style/Widget.Material3.Chip.Filter"
+                style="@style/Widget.TvPlayer.Chip"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:checkable="true"
@@ -60,7 +60,7 @@
 
             <com.google.android.material.chip.Chip
                 android:id="@+id/chipLive"
-                style="@style/Widget.Material3.Chip.Filter"
+                style="@style/Widget.TvPlayer.Chip"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:checkable="true"
@@ -75,7 +75,7 @@
             android:paddingStart="16dp"
             android:paddingTop="4dp"
             android:paddingEnd="16dp"
-            android:textAppearance="?attr/textAppearanceBodySmall"
+            android:textAppearance="@style/TextAppearance.TvPlayer.Caption"
             android:textColor="@color/on_surface_variant" />
 
         <androidx.recyclerview.widget.RecyclerView

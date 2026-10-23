@@ -24,7 +24,9 @@ import com.tv.player.R
 import com.tv.player.core.Grouper
 import com.tv.player.core.Hot
 import com.tv.player.core.Search
+import com.tv.player.core.ResultFilter
 import com.tv.player.core.Store
+import com.tv.player.data.VodGroup
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
@@ -46,6 +48,11 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
     private lateinit var hotAdapter: HotAdapter
     private var hotSections: List<Hot.Section> = emptyList()
     private var searching = false
+    private lateinit var filterBox: View
+    private lateinit var filterChips: ChipGroup
+    private val filter = ResultFilter()
+    private var raw: List<VodGroup> = emptyList()
+    private var keyword = ""
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         query = view.findViewById(R.id.query)
@@ -57,6 +64,8 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         results = view.findViewById(R.id.results)
 
         hotBox = view.findViewById(R.id.hot)
+        filterBox = view.findViewById(R.id.filterBox)
+        filterChips = view.findViewById(R.id.filters)
         hotTabs = view.findViewById(R.id.hotTabs)
         hotGrid = view.findViewById(R.id.hotGrid)
         hotRows = view.findViewById(R.id.hotRows)
@@ -85,6 +94,10 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         // An empty status line must not take up a row of height.
         status.doAfterTextChanged { status.visibility = if (it.isNullOrEmpty()) View.GONE else View.VISIBLE }
 
+        view.findViewById<View>(R.id.phoneInput).apply {
+            visibility = if (requireContext().isTv()) View.VISIBLE else View.GONE
+            setOnClickListener { PhonePush.show(requireActivity() as androidx.appcompat.app.AppCompatActivity) { runSearch(it) } }
+        }
         val clear = view.findViewById<View>(R.id.clear)
         query.doAfterTextChanged { clear.visibility = if (it.isNullOrEmpty()) View.GONE else View.VISIBLE }
         clear.setOnClickListener {
@@ -136,6 +149,10 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         progress.visibility = View.GONE
         status.text = ""
         searching = false
+        // Back to the charts: the filters belonged to the search that was cleared.
+        raw = emptyList()
+        filter.reset()
+        filterBox.visibility = View.GONE
         syncIdle()
         showHistory()
         loadHot()
@@ -205,8 +222,7 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
                 Chip(requireContext()).apply {
                     text = kw
                     textSize = 13f
-                    chipMinHeight = requireContext().dp(30).toFloat()
-                    setEnsureMinTouchTargetSize(false)
+                    chipMinHeight = requireContext().dp(34).toFloat()
                     setOnClickListener {
                         query.setText(kw)
                         search(kw)
@@ -231,8 +247,7 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
                 Chip(requireContext()).apply {
                     text = "清空"
                     textSize = 13f
-                    chipMinHeight = requireContext().dp(30).toFloat()
-                    setEnsureMinTouchTargetSize(false)
+                    chipMinHeight = requireContext().dp(34).toFloat()
                     setChipIconResource(R.drawable.ic_delete)
                     isChipIconVisible = true
                     chipIconSize = requireContext().dp(16).toFloat()
@@ -252,8 +267,80 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         historyBox.visibility = if (items.isEmpty()) View.GONE else View.VISIBLE
     }
 
-    private fun search(raw: String) {
-        val keyword = raw.trim()
+    /** Fills the box and searches, for keywords that arrive from the phone. */
+    fun runSearch(keyword: String) {
+        if (view == null) return
+        query.setText(keyword)
+        search(keyword)
+    }
+
+    /** The merged results through the current sort / filter, plus the row of filter chips. */
+    private fun showResults() {
+        val shown = filter.apply(raw)
+        adapter.submitList(shown)
+        buildFilters(shown.size)
+    }
+
+    private fun buildFilters(shown: Int) {
+        filterChips.removeAllViews()
+        if (raw.size < 2 && !filter.active) {
+            filterBox.visibility = View.GONE
+            return
+        }
+        fun chip(text: String, active: Boolean, onClick: () -> Unit) = Chip(requireContext()).apply {
+            this.text = text
+            textSize = 13f
+            chipMinHeight = requireContext().dp(34).toFloat()
+            isCheckable = true
+            isChecked = active
+            setOnClickListener {
+                isChecked = active // the dialog decides; do not flip by itself
+                onClick()
+            }
+            filterChips.addView(this)
+        }
+        fun pick(title: String, options: List<String>, checked: Int, onPick: (Int) -> Unit) {
+            MaterialAlertDialogBuilder(requireContext())
+                .setTitle(title)
+                .setSingleChoiceItems(options.toTypedArray(), checked) { d, i ->
+                    onPick(i)
+                    d.dismiss()
+                    showResults()
+                }
+                .show()
+        }
+        chip("排序：${ResultFilter.SORTS[filter.sort]}", filter.sort != 0) {
+            pick("排序", ResultFilter.SORTS, filter.sort) { filter.sort = it }
+        }
+        val years = filter.years(raw)
+        if (years.isNotEmpty()) chip(if (filter.year.isEmpty()) "年份" else "年份：${filter.year}", filter.year.isNotEmpty()) {
+            val options = listOf("全部") + years
+            pick("年份", options, options.indexOf(filter.year).coerceAtLeast(0)) { filter.year = if (it == 0) "" else options[it] }
+        }
+        val kinds = filter.kinds(raw)
+        if (kinds.size >= 2 || filter.kind.isNotEmpty()) chip(if (filter.kind.isEmpty()) "类型" else "类型：${filter.kind}", filter.kind.isNotEmpty()) {
+            val options = listOf("全部") + kinds
+            pick("类型", options, options.indexOf(filter.kind).coerceAtLeast(0)) { filter.kind = if (it == 0) "" else options[it] }
+        }
+        chip(if (filter.quality == 0) "清晰度" else "清晰度：${ResultFilter.QUALITIES[filter.quality]}", filter.quality != 0) {
+            pick("清晰度（按片源备注判断）", ResultFilter.QUALITIES, filter.quality) { filter.quality = it }
+        }
+        val sources = filter.sources(raw)
+        if (sources.size >= 2 || filter.source.isNotEmpty()) chip(if (filter.source.isEmpty()) "来源" else "来源：${filter.source}", filter.source.isNotEmpty()) {
+            val options = listOf("全部") + sources
+            pick("来源", options, options.indexOf(filter.source).coerceAtLeast(0)) { filter.source = if (it == 0) "" else options[it] }
+        }
+        if (filter.active) {
+            chip("重置（${shown}/${raw.size}）", false) {
+                filter.reset()
+                showResults()
+            }
+        }
+        filterBox.visibility = View.VISIBLE
+    }
+
+    private fun search(text: String) {
+        val keyword = text.trim()
         if (keyword.isEmpty()) return
         (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
             .hideSoftInputFromWindow(query.windowToken, 0)
@@ -268,6 +355,10 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
 
         job?.cancel()
         val grouper = Grouper()
+        this.keyword = keyword
+        filter.reset()
+        raw = emptyList()
+        filterBox.visibility = View.GONE
         adapter.submitList(emptyList())
         searching = true
         hotBox.visibility = View.GONE
@@ -282,7 +373,8 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
                 done++
                 if (hit.error == null) ok++
                 grouper.add(hit.items)
-                adapter.submitList(grouper.snapshot(keyword))
+                raw = grouper.snapshot(keyword)
+                showResults()
                 status.text = "已返回 $done/${sources.size} 个源 · ${grouper.size} 个结果"
             }
             progress.visibility = View.GONE

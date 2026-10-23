@@ -21,7 +21,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
-        android:textAppearance="?attr/textAppearanceTitleMedium" />
+        android:textAppearance="@style/TextAppearance.TvPlayer.ItemTitle" />
 
     <TextView
         android:id="@+id/emptySub"
@@ -29,7 +29,7 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="6dp"
         android:gravity="center"
-        android:textAppearance="?attr/textAppearanceBodyMedium"
+        android:textAppearance="@style/TextAppearance.TvPlayer.Body"
         android:textColor="@color/on_surface_variant" />
 
 </LinearLayout>

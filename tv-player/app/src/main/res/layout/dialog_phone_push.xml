@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:gravity="center_horizontal"
+    android:orientation="vertical"
+    android:padding="20dp">
+
+    <ImageView
+        android:id="@+id/pushQr"
+        android:layout_width="220dp"
+        android:layout_height="220dp"
+        android:contentDescription="二维码" />
+
+    <TextView
+        android:id="@+id/pushUrl"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:textColor="@color/accent"
+        android:textIsSelectable="true" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:gravity="center"
+        android:text="手机和电视连同一个 Wi-Fi，用手机扫码打开页面，\n可以输入搜索词、添加点播源或直播源。关掉这个窗口后地址就失效了。"
+        android:textColor="@color/on_surface_variant" />
+
+</LinearLayout>

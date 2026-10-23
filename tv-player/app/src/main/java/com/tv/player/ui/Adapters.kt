@@ -77,8 +77,11 @@ class VodGroupAdapter(
             transformations(RoundedCornersTransformation(h.itemView.context.dp(8).toFloat()))
         }
         val many = g.items.size > 1
-        h.badge.visibility = if (many) View.VISIBLE else View.GONE
-        h.badge.text = "${g.items.size} 个源"
+        h.badge.visibility = if (g.badge.isNotEmpty() || many) View.VISIBLE else View.GONE
+        h.badge.text = g.badge.ifEmpty { "${g.items.size} 个源" }
+        // "新" (new episodes) is news and gets the accent; the source count is just information.
+        h.badge.setBackgroundResource(if (g.badge.isNotEmpty()) R.drawable.bg_badge else R.drawable.bg_badge_muted)
+        h.badge.setTextColor(if (g.badge.isNotEmpty()) 0xFF00224D.toInt() else android.graphics.Color.WHITE)
         h.remarks.text = g.remarks
         h.title.text = g.title
         h.subtitle.text = g.items.map { it.sourceName }.distinct().joinToString(" · ")
@@ -163,11 +166,19 @@ class ChannelAdapter(private val onClick: (LiveChannel) -> Unit) : ListAdapter<L
 }
 
 /** A row of selectable text chips, used for play lines and episodes. */
-class ChipAdapter(private val onClick: (Int) -> Unit) : RecyclerView.Adapter<ChipAdapter.Holder>() {
+/** [fill]: cells take the full grid column (episodes), otherwise they size to their text (lines). */
+class ChipAdapter(var fill: Boolean = false, private val onClick: (Int) -> Unit) : RecyclerView.Adapter<ChipAdapter.Holder>() {
     class Holder(val text: TextView) : RecyclerView.ViewHolder(text)
 
     private var labels: List<String> = emptyList()
     private var selected = -1
+
+    // Stable ids keep the focused chip in place across submit(); otherwise a remote's focus jumps off the row.
+    init {
+        setHasStableIds(true)
+    }
+
+    override fun getItemId(position: Int) = position.toLong()
 
     fun submit(list: List<String>, selectedIndex: Int) {
         labels = list
@@ -177,8 +188,11 @@ class ChipAdapter(private val onClick: (Int) -> Unit) : RecyclerView.Adapter<Chi
 
     override fun getItemCount() = labels.size
 
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) =
-        Holder(LayoutInflater.from(parent.context).inflate(R.layout.item_chip, parent, false) as TextView)
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
+        val text = LayoutInflater.from(parent.context).inflate(R.layout.item_chip, parent, false) as TextView
+        if (fill) text.layoutParams = text.layoutParams.apply { width = ViewGroup.LayoutParams.MATCH_PARENT }
+        return Holder(text)
+    }
 
     override fun onBindViewHolder(h: Holder, position: Int) {
         h.text.text = labels[position]

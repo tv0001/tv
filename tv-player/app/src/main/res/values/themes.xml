@@ -3,6 +3,8 @@
     <color name="bg">#0E1015</color>
     <color name="surface">#161923</color>
     <color name="surface_variant">#232837</color>
+    <!-- raised neutral for chips, options, inputs and secondary buttons -->
+    <color name="surface_high">#1F2330</color>
     <color name="outline">#363C50</color>
     <color name="accent">#6EA8FF</color>
     <color name="accent_container">#1E3B6B</color>
@@ -16,8 +18,8 @@
         <item name="colorPrimaryContainer">@color/accent_container</item>
         <item name="colorOnPrimaryContainer">#D6E4FF</item>
         <item name="colorSecondary">#AFC3EA</item>
-        <item name="colorSecondaryContainer">#2A3550</item>
-        <item name="colorOnSecondaryContainer">#DCE6FA</item>
+        <item name="colorSecondaryContainer">@color/surface_high</item>
+        <item name="colorOnSecondaryContainer">@color/on_surface</item>
         <item name="colorSurface">@color/surface</item>
         <item name="colorOnSurface">@color/on_surface</item>
         <item name="colorSurfaceVariant">@color/surface_variant</item>
@@ -30,6 +32,7 @@
         <item name="android:navigationBarColor">@color/surface</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="bottomNavigationStyle">@style/Widget.TvPlayer.Nav</item>
+        <item name="chipStyle">@style/Widget.TvPlayer.Chip</item>
     </style>
 
     <style name="Widget.TvPlayer.Nav" parent="Widget.Material3.BottomNavigationView">
@@ -48,13 +51,124 @@
         <item name="cardElevation">0dp</item>
     </style>
 
+    <!-- Type scale: page title 22, section 16, body 14, caption 12. The accent colour means "selected" or the one
+         primary action of a screen; headings stay neutral. -->
     <style name="TextAppearance.TvPlayer.Headline" parent="TextAppearance.Material3.TitleLarge">
+        <item name="android:textSize">22sp</item>
         <item name="android:textStyle">bold</item>
         <item name="android:textColor">@color/on_surface</item>
     </style>
 
-    <style name="TextAppearance.TvPlayer.Section" parent="TextAppearance.Material3.TitleSmall">
-        <item name="android:textColor">@color/accent</item>
+    <style name="PlaySettingsLabel">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginBottom">6dp</item>
+        <item name="android:textColor">@color/on_surface</item>
+        <item name="android:textSize">15sp</item>
         <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="PlaySettingsHint">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textColor">@color/on_surface_variant</item>
+        <item name="android:textSize">12sp</item>
+    </style>
+
+    <style name="PlaySettingsRow">
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_gravity">center_vertical</item>
+        <item name="android:textColor">@color/on_surface_variant</item>
+        <item name="android:textSize">13sp</item>
+    </style>
+
+    <style name="TextAppearance.TvPlayer.Section" parent="TextAppearance.Material3.TitleSmall">
+        <item name="android:textSize">16sp</item>
+        <item name="android:textColor">@color/on_surface</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <!-- List item / card title, e.g. a source name or an empty-state headline. -->
+    <style name="TextAppearance.TvPlayer.ItemTitle" parent="TextAppearance.Material3.TitleMedium">
+        <item name="android:textSize">16sp</item>
+        <item name="android:textColor">@color/on_surface</item>
+    </style>
+
+    <style name="TextAppearance.TvPlayer.Body" parent="TextAppearance.Material3.BodyMedium">
+        <item name="android:textSize">14sp</item>
+        <item name="android:textColor">@color/on_surface</item>
+    </style>
+
+    <!-- Secondary information: descriptions, counts, status lines. -->
+    <style name="TextAppearance.TvPlayer.Caption" parent="TextAppearance.Material3.BodySmall">
+        <item name="android:textSize">12sp</item>
+        <item name="android:textColor">@color/on_surface_variant</item>
+    </style>
+
+    <!-- One chip look everywhere (history, filters, setting options, live groups): flat neutral, filled with the
+         accent container when selected, no check mark. -->
+    <style name="Widget.TvPlayer.Chip" parent="Widget.Material3.Chip.Filter">
+        <item name="chipBackgroundColor">@color/chip_bg</item>
+        <item name="android:textColor">@color/chip_text</item>
+        <item name="chipStrokeWidth">0dp</item>
+        <item name="chipCornerRadius">10dp</item>
+        <item name="chipMinHeight">34dp</item>
+        <item name="checkedIconVisible">false</item>
+        <item name="chipMinTouchTargetSize">48dp</item>
+        <item name="ensureMinTouchTargetSize">true</item>
+        <item name="closeIconTint">@color/on_surface_variant</item>
+        <item name="android:textSize">13sp</item>
+    </style>
+
+    <!-- Segmented options in the play settings sheet. -->
+    <style name="Widget.TvPlayer.Segment" parent="Widget.Material3.Button.OutlinedButton">
+        <item name="backgroundTint">@color/chip_bg</item>
+        <item name="android:textColor">@color/chip_text</item>
+        <item name="strokeColor">@color/segment_stroke</item>
+    </style>
+
+    <!-- Secondary buttons: neutral fill, accent outline when focused with the remote. -->
+    <style name="Widget.TvPlayer.TonalButton" parent="Widget.Material3.Button.TonalButton">
+        <item name="strokeColor">@color/focus_stroke</item>
+        <item name="strokeWidth">2dp</item>
+    </style>
+
+    <!-- TV: settings slide in as a full-height panel on the right, leaving the picture visible on the left. -->
+    <style name="Theme.TvPlayer.SidePanel" parent="Theme.TvPlayer">
+        <item name="android:windowIsFloating">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowBackground">@color/surface</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:backgroundDimAmount">0.35</item>
+        <item name="android:windowAnimationStyle">@style/Animation.TvPlayer.SidePanel</item>
+    </style>
+
+    <style name="Animation.TvPlayer.SidePanel" parent="@android:style/Animation">
+        <item name="android:windowEnterAnimation">@anim/panel_in_right</item>
+        <item name="android:windowExitAnimation">@anim/panel_out_right</item>
+    </style>
+
+    <!-- The − / + of a stepper. -->
+    <style name="Widget.TvPlayer.StepButton" parent="Widget.Material3.Button.TextButton">
+        <item name="strokeColor">@color/focus_stroke</item>
+        <item name="strokeWidth">2dp</item>
+        <item name="android:layout_width">48dp</item>
+        <item name="android:layout_height">48dp</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:padding">0dp</item>
+        <item name="android:textSize">20sp</item>
+        <item name="android:textColor">@color/on_surface</item>
+        <item name="shapeAppearance">@style/ShapeAppearance.Material3.Corner.Full</item>
+    </style>
+
+    <!-- Light actions under the picture: icon over label. -->
+    <style name="Widget.TvPlayer.Action" parent="Widget.Material3.Button.TextButton.Icon">
+        <item name="android:textColor">@color/on_surface</item>
+        <item name="iconTint">@color/on_surface</item>
+        <item name="iconGravity">top</item>
+        <item name="iconPadding">4dp</item>
+        <item name="android:textSize">12sp</item>
     </style>
 </resources>

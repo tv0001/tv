@@ -23,21 +23,46 @@ object Library {
         val epName: String = "",
         val posMs: Long = 0,
         val time: Long = System.currentTimeMillis(),
+        /** Favorites only: episodes the user has seen listed, and the most the sources currently list (0 = unknown). */
+        val seen: Int = 0,
+        val latest: Int = 0,
     ) {
+        /** Episodes added since the user last opened the series. */
+        val fresh get() = if (seen > 0 && latest > seen) latest - seen else 0
+
         fun toGroup(withProgress: Boolean) =
             VodGroup(key, title, pic, if (withProgress && epName.isNotEmpty()) "看到 $epName" else "", items)
+
+        fun toFavoriteGroup() = VodGroup(
+            key, title, pic,
+            when {
+                fresh > 0 -> "更新 +$fresh 集 · 共 $latest 集"
+                latest > 1 -> "更新至 $latest 集"
+                else -> ""
+            },
+            items,
+            if (fresh > 0) "新" else "",
+        )
     }
 
-    private class Helper(context: Context) : SQLiteOpenHelper(context, "tv.db", null, 1) {
+    private class Helper(context: Context) : SQLiteOpenHelper(context, "tv.db", null, 2) {
         override fun onCreate(db: SQLiteDatabase) {
-            db.execSQL("CREATE TABLE favorites(k TEXT PRIMARY KEY, title TEXT NOT NULL, pic TEXT NOT NULL, items TEXT NOT NULL, time INTEGER NOT NULL)")
+            db.execSQL(
+                "CREATE TABLE favorites(k TEXT PRIMARY KEY, title TEXT NOT NULL, pic TEXT NOT NULL, items TEXT NOT NULL, time INTEGER NOT NULL, " +
+                    "seen INTEGER NOT NULL DEFAULT 0, latest INTEGER NOT NULL DEFAULT 0)",
+            )
             db.execSQL(
                 "CREATE TABLE history(k TEXT PRIMARY KEY, title TEXT NOT NULL, pic TEXT NOT NULL, items TEXT NOT NULL, " +
                     "ep INTEGER NOT NULL, ep_name TEXT NOT NULL, pos INTEGER NOT NULL, time INTEGER NOT NULL)",
             )
         }
 
-        override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+        override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+            if (oldVersion < 2) {
+                db.execSQL("ALTER TABLE favorites ADD COLUMN seen INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE favorites ADD COLUMN latest INTEGER NOT NULL DEFAULT 0")
+            }
+        }
     }
 
     private lateinit var helper: Helper
@@ -47,13 +72,14 @@ object Library {
         helper = Helper(context.applicationContext)
     }
 
-    private fun favorite(c: Cursor) = Entry(c.getString(0), c.getString(1), c.getString(2), vodItemsFromJson(c.getString(3)), time = c.getLong(4))
+    private fun favorite(c: Cursor) =
+        Entry(c.getString(0), c.getString(1), c.getString(2), vodItemsFromJson(c.getString(3)), time = c.getLong(4), seen = c.getInt(5), latest = c.getInt(6))
 
     private fun history(c: Cursor) =
         Entry(c.getString(0), c.getString(1), c.getString(2), vodItemsFromJson(c.getString(3)), c.getInt(4), c.getString(5), c.getLong(6), c.getLong(7))
 
     fun favorites(): List<Entry> =
-        db.rawQuery("SELECT k,title,pic,items,time FROM favorites ORDER BY time DESC", null).use { c ->
+        db.rawQuery("SELECT k,title,pic,items,time,seen,latest FROM favorites ORDER BY time DESC", null).use { c ->
             buildList { while (c.moveToNext()) add(favorite(c)) }
         }
 
@@ -74,11 +100,22 @@ object Library {
         if (on) {
             val cv = ContentValues().apply {
                 put("k", e.key); put("title", e.title); put("pic", e.pic); put("items", e.items.toJsonString()); put("time", System.currentTimeMillis())
+                put("seen", e.seen); put("latest", e.latest)
             }
             db.insertWithOnConflict("favorites", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
         } else {
             db.delete("favorites", "k=?", arrayOf(e.key))
         }
+    }
+
+    /** What the sources list now. The first reading becomes the baseline so an old favorite does not show as new. */
+    fun updateLatest(key: String, latest: Int) {
+        db.execSQL("UPDATE favorites SET latest=?, seen=CASE WHEN seen=0 THEN ? ELSE seen END WHERE k=?", arrayOf(latest, latest, key))
+    }
+
+    /** The user opened the series and saw [count] episodes listed. */
+    fun markSeen(key: String, count: Int) {
+        db.execSQL("UPDATE favorites SET seen=?, latest=MAX(latest, ?) WHERE k=? AND ?>0", arrayOf(count, count, key, count))
     }
 
     fun saveProgress(e: Entry) {
@@ -95,11 +132,12 @@ object Library {
 
     private fun toJson(e: Entry) = JSONObject()
         .put("k", e.key).put("title", e.title).put("pic", e.pic).put("items", JSONArray(e.items.toJsonString()))
-        .put("ep", e.ep).put("epName", e.epName).put("pos", e.posMs).put("time", e.time)
+        .put("ep", e.ep).put("epName", e.epName).put("pos", e.posMs).put("time", e.time).put("seen", e.seen).put("latest", e.latest)
 
     private fun fromJson(o: JSONObject) = Entry(
         o.getString("k"), o.getString("title"), o.optString("pic"), vodItemsFromJson(o.getJSONArray("items").toString()),
         o.optInt("ep"), o.optString("epName"), o.optLong("pos"), o.optLong("time", System.currentTimeMillis()),
+        o.optInt("seen"), o.optInt("latest"),
     )
 
     fun exportJson(): JSONObject = JSONObject()
@@ -119,6 +157,7 @@ object Library {
                         "favorites", null,
                         ContentValues().apply {
                             put("k", e.key); put("title", e.title); put("pic", e.pic); put("items", e.items.toJsonString()); put("time", e.time)
+                            put("seen", e.seen); put("latest", e.latest)
                         },
                         SQLiteDatabase.CONFLICT_REPLACE,
                     )

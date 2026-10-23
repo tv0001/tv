@@ -1,9 +1,9 @@
 {
-  "versionCode": 7,
-  "versionName": "1.0.6",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.6.apk",
-  "sha256": "1818d1e1d213d9e901262f1964b99a650da002054a951dd458ad4a1073b3cf87",
-  "size": 2882085,
-  "notes": "新增：发现页热播推荐改为顶部标签（剧集 / 电影 / 综艺 / 动漫），设置里可切回分组横滑\n新增：点播源从 17 个增加到 26 个\n优化：直播线路更新，去掉带广告的线路，新增更多卫视线路",
+  "versionCode": 8,
+  "versionName": "1.0.7",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.7.apk",
+  "sha256": "2120127371627e4a1423493e8bd82828150b87cdff1829f761959dbe5f27dee7",
+  "size": 2977495,
+  "notes": "新增：电视点播详情页（模糊海报背景、小窗预览、简介、分段选集），确认键全屏\n新增：追剧更新提醒、跳过片头片尾、倍速记忆、睡眠定时\n新增：后台听声音、小窗播放；搜索结果按年份 / 类型 / 清晰度 / 来源筛选\n新增：直播节目单、遥控器换台和数字选台，记住每个频道的线路\n新增：手机扫码给电视输入；热播推荐增加「最近更新」\n优化：整体界面统一，电视播放全屏 + 底部控制栏，播放时不锁屏",
   "force": false
 }

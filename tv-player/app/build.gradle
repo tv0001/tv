@@ -10,8 +10,8 @@ android {
         applicationId = 'com.tv.player'
         minSdk = 26
         targetSdk = 35
-        versionCode = (project.findProperty('appVersionCode') ?: '7').toString().toInteger()
-        versionName = (project.findProperty('appVersionName') ?: '1.0.6').toString()
+        versionCode = (project.findProperty('appVersionCode') ?: '8').toString().toInteger()
+        versionName = (project.findProperty('appVersionName') ?: '1.0.7').toString()
     }
 
     buildFeatures {
@@ -45,5 +45,6 @@ dependencies {
     implementation 'androidx.media3:media3-ui:1.6.1'
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
     implementation 'io.coil-kt:coil:2.7.0'
+    implementation 'com.google.zxing:core:3.5.3'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0'
 }

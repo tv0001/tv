@@ -13,6 +13,15 @@ import java.net.URLEncoder
 object Cms {
     private val adult = Regex("伦理|福利|情色|成人|写真|里番|三级")
 
+    /** Coarse category from a source's own category name; "" when it cannot be told. */
+    fun kindOf(typeName: String): String = when {
+        "综艺" in typeName -> "综艺"
+        "动漫" in typeName || "动画" in typeName -> "动漫"
+        typeName.endsWith("剧") || "连续剧" in typeName || "电视剧" in typeName -> "剧集"
+        typeName.endsWith("片") || "电影" in typeName -> "电影"
+        else -> ""
+    }
+
     private fun url(api: String, query: String) = api + (if ('?' in api) "&" else "?") + query
 
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
@@ -33,7 +42,11 @@ object Cms {
             val title = o.optString("vod_name").trim()
             if (id.isEmpty() || title.isEmpty()) continue
             if (adult.containsMatchIn(o.optString("type_name"))) continue
-            out += VodItem(source.key, source.name, id, title, o.optString("vod_pic").trim(), o.optString("vod_remarks").trim())
+            out += VodItem(
+                source.key, source.name, id, title, o.optString("vod_pic").trim(), o.optString("vod_remarks").trim(),
+                year = o.optString("vod_year").trim().takeIf { it.length == 4 && it.all(Char::isDigit) }.orEmpty(),
+                kind = kindOf(o.optString("type_name")),
+            )
         }
         return out
     }
@@ -44,8 +57,24 @@ object Cms {
         val o = JSONObject(r.text).optJSONArray("list")?.optJSONObject(0) ?: return null
         val lines = parseLines(o.optString("vod_play_from"), o.optString("vod_play_url"))
         if (lines.isEmpty()) return null
-        return VodDetail(o.optString("vod_name"), o.optString("vod_pic"), lines)
+        fun field(name: String) = o.optString(name).trim().takeUnless { it == "null" }.orEmpty()
+        return VodDetail(
+            field("vod_name"), field("vod_pic"), lines,
+            year = field("vod_year").takeIf { it.length == 4 }.orEmpty(),
+            area = field("vod_area"),
+            type = field("type_name"),
+            remarks = field("vod_remarks"),
+            director = field("vod_director"),
+            actor = field("vod_actor"),
+            content = plainText(field("vod_content")),
+            score = (field("vod_douban_score").ifEmpty { field("vod_score") }).takeIf { (it.toDoubleOrNull() ?: 0.0) > 0 }.orEmpty(),
+        )
     }
+
+    /** Synopses come as HTML fragments; the details panel wants one plain paragraph. */
+    private fun plainText(html: String): String =
+        html.replace(Regex("<[^>]+>"), "").replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+            .replace(Regex("\\s+"), " ").trim()
 
     /** `from` and `urls` hold one entry per line, joined by $$$; episodes are joined by #, each `name$url`. */
     fun parseLines(from: String, urls: String): List<PlayLine> {

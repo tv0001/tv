@@ -188,6 +188,38 @@ object Store {
 
     fun setHotLayout(mode: String) = prefs.edit().putString("hot_layout", mode).apply()
 
+    // ---- favorites tracking --------------------------------------------------------------------------------------
+
+    fun trackChecked(): Long = prefs.getLong("track_checked", 0L)
+
+    fun markTrackChecked() = prefs.edit().putLong("track_checked", System.currentTimeMillis()).apply()
+
+    // ---- playback preferences ------------------------------------------------------------------------------------
+
+    /** Last playback speed chosen for on-demand video, applied to the next one. */
+    fun playSpeed(): Float = prefs.getFloat("play_speed", 1f)
+
+    fun setPlaySpeed(speed: Float) = prefs.edit().putFloat("play_speed", speed).apply()
+
+    /** Seconds to skip at the start and at the end of every episode of one series (key = the series key). */
+    fun skip(key: String): Pair<Int, Int> =
+        prefs.getString("skip_$key", null)?.split(',')?.let { (it.getOrNull(0)?.toIntOrNull() ?: 0) to (it.getOrNull(1)?.toIntOrNull() ?: 0) } ?: (0 to 0)
+
+    fun setSkip(key: String, intro: Int, outro: Int) =
+        prefs.edit().apply { if (intro == 0 && outro == 0) remove("skip_$key") else putString("skip_$key", "$intro,$outro") }.apply()
+
+    /** What leaving the player does: "pause" (default), "audio" keeps the sound going, "pip" shrinks to a floating window. */
+    fun leaveAction(): String = prefs.getString("leave_action", "pause") ?: "pause"
+
+    fun setLeaveAction(action: String) = prefs.edit().putString("leave_action", action).apply()
+
+    /** The line the user picked by hand for a live channel, remembered by address. */
+    fun liveLine(channel: String): String? = prefs.getString("liveline_$channel", null)
+
+    fun setLiveLine(channel: String, url: String) = prefs.edit().putString("liveline_$channel", url).apply()
+
+    fun clearLiveLine(channel: String) = prefs.edit().remove("liveline_$channel").apply()
+
     // ---- hot chart cache -----------------------------------------------------------------------------------------
 
     fun hotCache(): Pair<Long, String>? = prefs.getString("hot", null)?.let { prefs.getLong("hot_at", 0L) to it }

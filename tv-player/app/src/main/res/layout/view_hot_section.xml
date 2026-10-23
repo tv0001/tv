@@ -10,7 +10,7 @@
         android:layout_height="wrap_content"
         android:paddingTop="8dp"
         android:paddingBottom="2dp"
-        android:textAppearance="?attr/textAppearanceTitleSmall"
+        android:textAppearance="@style/TextAppearance.TvPlayer.ItemTitle"
         android:textStyle="bold" />
 
     <androidx.recyclerview.widget.RecyclerView

@@ -10,8 +10,10 @@
     android:gravity="center"
     android:maxLines="1"
     android:minWidth="64dp"
+    android:minHeight="48dp"
     android:paddingStart="14dp"
     android:paddingTop="8dp"
     android:paddingEnd="14dp"
     android:paddingBottom="8dp"
-    android:textAppearance="?attr/textAppearanceLabelLarge" />
+    android:textAppearance="?attr/textAppearanceLabelLarge"
+    android:textColor="@color/chip_text" />

@@ -13,6 +13,7 @@ import org.json.JSONObject
 object Hot {
     const val IMAGE_REFERER = "https://m.douban.com/"
     private const val FRESH_MS = 3 * 3600_000L
+    private const val RECENT = "最近更新"
     private val charts = listOf(
         "movie_real_time_hotest" to "热播电影",
         "tv_real_time_hotest" to "热播剧集",
@@ -25,7 +26,7 @@ object Hot {
 
     class Section(val title: String, val items: List<Item>)
 
-    private val order = listOf("热播剧集", "热播电影", "热播综艺", "热播动漫")
+    private val order = listOf("热播剧集", "热播电影", "热播综艺", "热播动漫", RECENT)
 
     private fun List<Section>.ordered() = sortedBy { order.indexOf(it.title).let { i -> if (i < 0) order.size else i } }
 
@@ -35,7 +36,23 @@ object Hot {
     /** Fresh cache is returned without touching the network; otherwise downloads. Null when nothing could be loaded. */
     suspend fun refresh(force: Boolean = false): List<Section>? {
         if (Store.hotMode() == "cms") return latest(force)
-        return douban(force) ?: latest(force)
+        // The recent-updates tab is fetched alongside the charts so a slow source cannot hold the charts back.
+        val (charts, recent) = coroutineScope {
+            val c = async { douban(force) }
+            val r = async { runCatching { recent(force) }.getOrNull() }
+            c.await() to r.await()
+        }
+        if (charts == null) return latest(force)
+        return if (recent == null) charts else (charts + recent).ordered()
+    }
+
+    /** One mixed tab of what the sources updated most recently, series / movies / variety / anime interleaved. */
+    private suspend fun recent(force: Boolean): Section? {
+        val groups = latest(force)?.map { it.items } ?: return null
+        val mixed = ArrayList<Item>()
+        for (i in 0 until (groups.maxOfOrNull { it.size } ?: 0)) groups.forEach { g -> g.getOrNull(i)?.let(mixed::add) }
+        val items = mixed.distinctBy { Search.normalize(it.title) }.take(40)
+        return if (items.isEmpty()) null else Section(RECENT, items)
     }
 
     private suspend fun douban(force: Boolean): List<Section>? {
@@ -83,13 +100,7 @@ object Hot {
             val name = o.optString("vod_name").trim()
             val type = o.optString("type_name")
             if (name.isEmpty() || adult.containsMatchIn(type)) return@mapNotNull null
-            val kind = when {
-                "综艺" in type -> "综艺"
-                "动漫" in type || "动画" in type -> "动漫"
-                type.endsWith("剧") || "连续剧" in type || "电视剧" in type -> "剧集"
-                type.endsWith("片") || "电影" in type -> "电影"
-                else -> return@mapNotNull null
-            }
+            val kind = Cms.kindOf(type).ifEmpty { return@mapNotNull null }
             val pic = o.optString("vod_pic").trim()
             if (pic.isEmpty()) return@mapNotNull null // a poster row full of grey boxes is worse than a shorter row
             kind to Item(name, pic, 0.0, "", o.optString("vod_remarks").trim())

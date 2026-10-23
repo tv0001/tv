@@ -5,13 +5,16 @@ import android.view.View
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.chip.ChipGroup
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.tv.player.R
 import com.tv.player.core.Library
+import com.tv.player.core.Tracker
 import com.tv.player.data.VodGroup
+import kotlinx.coroutines.launch
 
 class MineFragment : Fragment(R.layout.fragment_mine) {
     private var showFavorites = false
@@ -43,13 +46,26 @@ class MineFragment : Fragment(R.layout.fragment_mine) {
 
     override fun onHiddenChanged(hidden: Boolean) {
         super.onHiddenChanged(hidden)
-        if (!hidden) refresh()
+        if (!hidden) {
+            refresh()
+            checkNew()
+        }
+    }
+
+    /** Looks for new episodes of the favorites (at most hourly) and refreshes the cards and the tab badge. */
+    private fun checkNew() {
+        if (!Tracker.due()) return
+        viewLifecycleOwner.lifecycleScope.launch {
+            Tracker.check()
+            refresh()
+            (activity as? MainActivity)?.updateMineBadge()
+        }
     }
 
     private fun refresh() {
         if (view == null) return
-        val entries = if (showFavorites) Library.favorites() else Library.history()
-        adapter.submitList(entries.map { it.toGroup(withProgress = !showFavorites) })
+        val entries = if (showFavorites) Library.favorites().sortedByDescending { it.fresh > 0 } else Library.history()
+        adapter.submitList(entries.map { if (showFavorites) it.toFavoriteGroup() else it.toGroup(withProgress = true) })
         empty.visibility = if (entries.isEmpty()) View.VISIBLE else View.GONE
         empty.findViewById<TextView>(R.id.emptyTitle).text = if (showFavorites) "还没有收藏" else "还没有观看记录"
         empty.findViewById<TextView>(R.id.emptySub).text =

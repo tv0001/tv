@@ -24,7 +24,7 @@
 
         <com.google.android.material.chip.Chip
             android:id="@+id/chipHistory"
-            style="@style/Widget.Material3.Chip.Filter"
+            style="@style/Widget.TvPlayer.Chip"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:checkable="true"
@@ -33,7 +33,7 @@
 
         <com.google.android.material.chip.Chip
             android:id="@+id/chipFav"
-            style="@style/Widget.Material3.Chip.Filter"
+            style="@style/Widget.TvPlayer.Chip"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:checkable="true"
