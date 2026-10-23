@@ -139,6 +139,10 @@ class PlayActivity : AppCompatActivity() {
 
     private val landscape get() = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     private val isTv by lazy { isTv() }
+
+    /** Side-by-side picture + panel on TV, and on wide tablet screens; the stacked layout everywhere else. */
+    private fun playLayout() =
+        if (isTv || (isTablet() && resources.configuration.screenWidthDp >= 720)) R.layout.activity_play_tv else R.layout.activity_play
     private var panel: View? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -174,12 +178,12 @@ class PlayActivity : AppCompatActivity() {
                 it.playWhenReady = true
             }
 
-        setContentView(if (isTv) R.layout.activity_play_tv else R.layout.activity_play)
+        setContentView(playLayout())
         bindViews()
         applySystemBars()
 
         onBackPressedDispatcher.addCallback(this) {
-            if (isTv && panel?.visibility == View.GONE) {
+            if (panel?.visibility == View.GONE) {
                 panel?.visibility = View.VISIBLE
                 playerView.setFullscreenButtonState(false)
             } else if (requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE) {
@@ -199,7 +203,7 @@ class PlayActivity : AppCompatActivity() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        setContentView(if (isTv) R.layout.activity_play_tv else R.layout.activity_play)
+        setContentView(playLayout())
         bindViews()
         refreshLists()
         updateFavorite()
@@ -225,28 +229,29 @@ class PlayActivity : AppCompatActivity() {
         }
         linesView = findViewById<RecyclerView?>(R.id.lines)?.also { it.adapter = lineAdapter }
         episodesView = findViewById<RecyclerView?>(R.id.episodes)?.also {
-            it.layoutManager = GridLayoutManager(this, if (isTv) 3 else 4)
+            it.layoutManager = GridLayoutManager(this, if (panel != null) 3 else 4)
             it.adapter = epAdapter
             if (isLive) it.visibility = View.GONE
         }
         epLabel = findViewById<TextView?>(R.id.epLabel)?.also { if (isLive) it.visibility = View.GONE }
 
         playerView.setFullscreenButtonClickListener { full ->
-            if (isTv) {
+            if (panel != null) {
                 panel?.visibility = if (full) View.GONE else View.VISIBLE
             } else {
                 requestedOrientation =
                     if (full) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
             }
         }
-        playerView.setFullscreenButtonState(if (isTv) panel?.visibility == View.GONE else landscape)
+        playerView.setFullscreenButtonState(if (panel != null) panel?.visibility == View.GONE else landscape)
         if (isTv) playerView.requestFocus()
         setupGestures()
     }
 
     private fun applySystemBars() {
         val controller = WindowCompat.getInsetsController(window, window.decorView)
-        if (landscape && !isTv) {
+        // Only the full-screen phone layout hides the system bars; the picture + side panel layout keeps them.
+        if (landscape && panel == null) {
             controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             controller.hide(WindowInsetsCompat.Type.systemBars())
         } else {

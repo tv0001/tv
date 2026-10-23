@@ -71,6 +71,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         modes.check(
             when (Store.uiMode()) {
                 "tv" -> R.id.modeTv
+                "tablet" -> R.id.modeTablet
                 "phone" -> R.id.modePhone
                 else -> R.id.modeAuto
             },
@@ -78,6 +79,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         modes.setOnCheckedStateChangeListener { _, ids ->
             val mode = when (ids.firstOrNull()) {
                 R.id.modeTv -> "tv"
+                R.id.modeTablet -> "tablet"
                 R.id.modePhone -> "phone"
                 else -> "auto"
             }

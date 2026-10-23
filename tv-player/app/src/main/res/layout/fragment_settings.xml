@@ -343,7 +343,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
-                    android:text="自动：按设备判断。有些电视盒子不会把自己报告成电视，界面不对时在这里手动选“电视”。"
+                    android:text="自动：按设备判断（最短边 600dp 以上当平板）。有些电视盒子不会把自己报告成电视，界面不对时在这里手动选。"
                     android:textAppearance="?attr/textAppearanceBodySmall"
                     android:textColor="@color/on_surface_variant" />
 
@@ -370,6 +370,14 @@
                         android:layout_height="wrap_content"
                         android:checkable="true"
                         android:text="手机" />
+
+                    <com.google.android.material.chip.Chip
+                        android:id="@+id/modeTablet"
+                        style="@style/Widget.Material3.Chip.Filter"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:checkable="true"
+                        android:text="平板" />
 
                     <com.google.android.material.chip.Chip
                         android:id="@+id/modeTv"

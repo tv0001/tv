@@ -75,6 +75,12 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
             }
         }
         view.findViewById<View>(R.id.searchIcon).setOnClickListener { search(query.text.toString()) }
+        status.setOnClickListener {
+            if (!searching && hotList.childCount == 0) {
+                status.text = "正在加载热播榜…"
+                loadHot(force = true)
+            }
+        }
         reset()
     }
 
@@ -104,21 +110,21 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         loadHot()
     }
 
-    /** With no search running: show the hot charts if there are any, otherwise the hint. */
+    /** With no search running: the hot charts if there are any. The big empty-state picture is only for "no results". */
     private fun syncIdle() {
-        val hasHot = hotList.childCount > 0
-        hotBox.visibility = if (hasHot) View.VISIBLE else View.GONE
-        empty.visibility = if (hasHot) View.GONE else View.VISIBLE
+        hotBox.visibility = if (hotList.childCount > 0) View.VISIBLE else View.GONE
+        empty.visibility = View.GONE
     }
 
-    private fun loadHot() {
+    private fun loadHot(force: Boolean = false) {
         viewLifecycleOwner.lifecycleScope.launch {
             if (hotList.childCount == 0) Hot.cached()?.let { renderHot(it) }
-            val fresh = Hot.refresh()
+            val fresh = Hot.refresh(force)
             if (fresh != null) {
                 renderHot(fresh)
+                if (!searching) status.text = ""
             } else if (hotList.childCount == 0 && !searching) {
-                status.text = "热播榜没加载出来（可能没连上豆瓣），直接搜索也可以"
+                status.text = "热播榜没加载出来（可能没连上豆瓣），点这里重试，或直接搜索"
             }
         }
     }
@@ -150,6 +156,9 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
             history.addView(
                 Chip(requireContext()).apply {
                     text = kw
+                    textSize = 13f
+                    chipMinHeight = requireContext().dp(30).toFloat()
+                    setEnsureMinTouchTargetSize(false)
                     setOnClickListener {
                         query.setText(kw)
                         search(kw)

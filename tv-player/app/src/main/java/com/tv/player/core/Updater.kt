@@ -45,6 +45,17 @@ object Updater {
             notes += "live.txt 下载失败（${live.error ?: "HTTP ${live.status}"}）"
         }
 
+        // Extra CMS sites that the crawler verified with a real search; optional, so a missing file is not an error.
+        val cms = Http.get(dir + "cms.json", timeoutMs = 25_000)
+        if (cms.status == 200) {
+            val n = runCatching { Store.parseSources(cms.text).size }.getOrDefault(0)
+            if (n > 0) {
+                Store.saveCms(cms.text)
+                notes += "补充 CMS 站点 $n 个"
+                any = true
+            }
+        }
+
         var customOk = 0
         val customs = Store.customLives()
         for (c in customs) {

@@ -18,7 +18,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(if (isTv()) R.layout.activity_main_tv else R.layout.activity_main)
+        setContentView(if (useSideNav()) R.layout.activity_main_tv else R.layout.activity_main)
 
         val fm = supportFragmentManager
         if (savedInstanceState == null) {

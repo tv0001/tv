@@ -24,18 +24,23 @@ object Hot {
 
     class Section(val title: String, val items: List<Item>)
 
-    fun cached(): List<Section>? = Store.hotCache()?.let { runCatching { parse(it.second) }.getOrNull() }?.takeIf { it.isNotEmpty() }
+    private val order = listOf("热播剧集", "热播电影", "热播综艺", "热播动漫")
+
+    private fun List<Section>.ordered() = sortedBy { order.indexOf(it.title).let { i -> if (i < 0) order.size else i } }
+
+    fun cached(): List<Section>? =
+        Store.hotCache()?.let { runCatching { parse(it.second) }.getOrNull() }?.takeIf { it.isNotEmpty() }?.ordered()
 
     /** Fresh cache is returned without touching the network; otherwise downloads. Null when nothing could be loaded. */
     suspend fun refresh(force: Boolean = false): List<Section>? {
         val cache = Store.hotCache()
         if (!force && cache != null && System.currentTimeMillis() - cache.first < FRESH_MS) {
-            runCatching { parse(cache.second) }.getOrNull()?.takeIf { it.isNotEmpty() }?.let { return it }
+            runCatching { parse(cache.second) }.getOrNull()?.takeIf { it.isNotEmpty() }?.let { return it.ordered() }
         }
         val sections = coroutineScope { charts.map { (id, title) -> async { fetchOne(id, title) } }.awaitAll() }.filterNotNull()
         if (sections.isEmpty()) return null
         Store.saveHot(serialize(sections))
-        return sections
+        return sections.ordered()
     }
 
     private suspend fun fetchOne(id: String, title: String): Section? {

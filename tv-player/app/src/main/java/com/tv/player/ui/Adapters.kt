@@ -30,9 +30,22 @@ fun Context.isTv(): Boolean = when (Store.uiMode()) {
         packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
 }
 
-/** Number of grid columns that keep posters around 120dp wide (170dp on TV). */
+/** Tablet: "auto" means a phone-sized-or-bigger screen with a smallest width of 600dp or more that is not a TV. */
+fun Context.isTablet(): Boolean = when (Store.uiMode()) {
+    "tablet" -> true
+    "auto" -> resources.configuration.smallestScreenWidthDp >= 600 && !isTv()
+    else -> false
+}
+
+/** TV and tablet get the side navigation rail instead of the bottom bar. */
+fun Context.useSideNav(): Boolean = isTv() || isTablet()
+
+/** Poster width in dp: bigger on TV (seen from the sofa) and tablets. */
+fun Context.posterDp(): Int = if (isTv()) 170 else if (isTablet()) 140 else 120
+
+/** Number of grid columns that keep posters around [posterDp] wide. */
 fun Context.gridSpan(minSpan: Int = 3): Int =
-    maxOf(minSpan, (resources.displayMetrics.widthPixels / resources.displayMetrics.density / (if (isTv()) 170 else 120)).toInt())
+    maxOf(minSpan, (resources.displayMetrics.widthPixels / resources.displayMetrics.density / posterDp()).toInt())
 
 /** Remote-control focus feedback: the focused card grows a little. */
 fun View.zoomOnFocus() {
@@ -87,7 +100,7 @@ class VodGroupAdapter(
 class HotAdapter(private val onClick: (Hot.Item) -> Unit) : ListAdapter<Hot.Item, VodGroupAdapter.Holder>(Diff) {
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VodGroupAdapter.Holder {
         val view = LayoutInflater.from(parent.context).inflate(R.layout.item_vod, parent, false)
-        view.layoutParams = RecyclerView.LayoutParams(parent.context.dp(if (parent.context.isTv()) 150 else 112), ViewGroup.LayoutParams.WRAP_CONTENT)
+        view.layoutParams = RecyclerView.LayoutParams(parent.context.dp(if (parent.context.isTv()) 150 else if (parent.context.isTablet()) 130 else 112), ViewGroup.LayoutParams.WRAP_CONTENT)
         return VodGroupAdapter.Holder(view)
     }
 

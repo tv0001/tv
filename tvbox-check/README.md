@@ -110,3 +110,15 @@ jsDelivr 的 `@main` 有缓存，更新可能延迟几个小时。
 - 本项目没有收录 steels/tvbox-config 仓库的内容，该仓库页面标注为"私有仓库，请勿传播"。
 - 聚合页中标注"福利"类的仓库未纳入候选列表。
 - 托管 `best.json` 等于转发第三方内容，请自行评估版权风险，仅供个人使用。
+
+## 纯 CMS 点播站点（给 TV Player 用）
+
+`cms_sources.py` 从所有可用配置里收集纯 Apple CMS（type 1）站点，再加上 `cms-candidates.tsv` 里的常见采集站，**逐个做一次真实搜索**，按域名去重，只保留真能搜出结果的，写入 `out/cms.json`（按响应速度排序）。每个站点探测两次，避免被一次超时误杀。
+
+```bash
+cd tvbox-check
+python3 -I check.py candidates.tsv out lives.tsv   # 先生成 results.json
+python3 -I cms_sources.py out
+```
+
+这些站点不需要 jar / js / python 运行时，所以只能跑纯接口的客户端（例如本仓库的 `tv-player/`）也能用。TV Player 内置了一份 `cms.json`，订阅更新时会从订阅目录下载新的。采集站本身时好时坏，建议和直播列表一样隔一两天重跑一次。

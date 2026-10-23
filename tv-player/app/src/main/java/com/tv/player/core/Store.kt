@@ -36,8 +36,14 @@ object Store {
 
     // ---- VOD sources ---------------------------------------------------------------------------------------------
 
-    /** Sources from the subscription (or the bundled copy). */
-    fun subscribed(): List<VodSource> = parseSources(prefs.getString("config", null) ?: asset("best.json"))
+    /** Sources from the subscription (or the bundled copy), plus the extra CMS sites that were verified with a real search. */
+    fun subscribed(): List<VodSource> =
+        parseSources(prefs.getString("config", null) ?: asset("best.json")) +
+            runCatching { parseSources(prefs.getString("cms", null) ?: asset("cms.json")) }.getOrDefault(emptyList())
+
+    fun saveCms(text: String) = prefs.edit().putString("cms", text).apply()
+
+    private fun authority(api: String) = runCatching { URL(api).authority.lowercase() }.getOrDefault(api)
 
     fun customSites(): List<VodSource> {
         val a = JSONArray(prefs.getString("custom_sites", "[]"))
@@ -74,11 +80,14 @@ object Store {
 
     fun setEnabled(key: String, enabled: Boolean) = setDisabled(if (enabled) disabled() - key else disabled() + key)
 
-    /** Subscribed plus custom sources, custom ones win on a duplicate address. */
+    /**
+     * Custom sources first, then the subscription. The same backend is often listed under several spellings
+     * (…/vod, …/vod/?ac=list), so only the first entry per host is kept.
+     */
     fun allSources(): List<VodSource> {
         val custom = customSites()
-        val keys = custom.map { it.key }.toSet()
-        return custom + subscribed().filter { it.key !in keys }
+        val seen = custom.map { authority(it.api) }.toMutableSet()
+        return custom + subscribed().filter { seen.add(authority(it.api)) }
     }
 
     /** What searches actually use: everything that is not switched off. */
