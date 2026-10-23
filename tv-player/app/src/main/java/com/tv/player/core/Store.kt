@@ -32,6 +32,11 @@ object Store {
     /** "auto" follows the system, "tv" / "phone" force a layout (many cheap TV boxes do not report TV mode). */
     fun uiMode(): String = prefs.getString("ui_mode", "auto") ?: "auto"
 
+    /** TV only: "auto" (design size 960dp across), "small" or "large". */
+    fun tvScale(): String = prefs.getString("tv_scale", "auto") ?: "auto"
+
+    fun setTvScale(scale: String) = prefs.edit().putString("tv_scale", scale).apply()
+
     fun setUiMode(mode: String) = prefs.edit().putString("ui_mode", mode).apply()
 
     // ---- VOD sources ---------------------------------------------------------------------------------------------

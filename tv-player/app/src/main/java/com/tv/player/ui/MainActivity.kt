@@ -12,7 +12,7 @@ import com.tv.player.core.Store
 import com.tv.player.core.Updater
 import kotlinx.coroutines.launch
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : BaseActivity() {
     private val tags = listOf("search", "live", "mine", "settings")
     private val navIds = listOf(R.id.nav_search, R.id.nav_live, R.id.nav_mine, R.id.nav_settings)
 

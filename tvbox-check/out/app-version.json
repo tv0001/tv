@@ -1,9 +1,9 @@
 {
-  "versionCode": 4,
-  "versionName": "1.0.3",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.3.apk",
-  "sha256": "7f5a85c77a67175118086df959047a01c887af50ab265da8e84fb15cc212219a",
-  "size": 2861493,
-  "notes": "优化：搜索页间距、各页面整体更紧凑，没有内容的状态行不再占位\n新增：最近搜索可以逐条删除（点小叉；遥控器长按确定）和一键清空\n新增：豆瓣榜单取不到时，改用各站点的最近更新补上四行海报，设置里可手动选择\n修复：热播榜无评分条目的海报被一长串文字盖住",
+  "versionCode": 5,
+  "versionName": "1.0.4",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.4.apk",
+  "sha256": "dc7ba1364a78a6d83302e33fa4e010e8c3f34b69cfca7f70e42fe365a05bd697",
+  "size": 2865589,
+  "notes": "新增：播放时自动检测视频真实分辨率（4K / 1080P / 720P），显示在状态栏并标在线路上\n新增：电视分辨率适配，按真实像素统一排版，设置里可调界面大小\n优化：搜索页间距更舒服，最近搜索可逐条删除和一键清空",
   "force": false
 }

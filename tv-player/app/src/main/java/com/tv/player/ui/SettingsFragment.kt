@@ -70,6 +70,30 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             }
         }
 
+        val dm = resources.displayMetrics
+        view.findViewById<TextView>(R.id.screenInfo).text =
+            "当前屏幕 ${maxOf(dm.widthPixels, dm.heightPixels)}×${minOf(dm.widthPixels, dm.heightPixels)} 像素，" +
+                "界面按 ${(maxOf(dm.widthPixels, dm.heightPixels) / dm.density).toInt()}dp 宽排版。只在电视模式下起作用；字太小或太大时在这里调。"
+        val tvScale = view.findViewById<ChipGroup>(R.id.tvScale)
+        tvScale.check(
+            when (Store.tvScale()) {
+                "small" -> R.id.scaleSmall
+                "large" -> R.id.scaleLarge
+                else -> R.id.scaleAuto
+            },
+        )
+        tvScale.setOnCheckedStateChangeListener { _, ids ->
+            val scale = when (ids.firstOrNull()) {
+                R.id.scaleSmall -> "small"
+                R.id.scaleLarge -> "large"
+                else -> "auto"
+            }
+            if (scale != Store.tvScale()) {
+                Store.setTvScale(scale)
+                requireActivity().recreate()
+            }
+        }
+
         val hotMode = view.findViewById<ChipGroup>(R.id.hotMode)
         hotMode.check(if (Store.hotMode() == "cms") R.id.hotCms else R.id.hotAuto)
         hotMode.setOnCheckedStateChangeListener { _, ids ->

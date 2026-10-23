@@ -37,6 +37,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
@@ -70,7 +71,7 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 @OptIn(UnstableApi::class)
-class PlayActivity : AppCompatActivity() {
+class PlayActivity : BaseActivity() {
     companion object {
         private const val STALL_MS = 20_000L
         private const val SAVE_MS = 10_000L
@@ -112,6 +113,10 @@ class PlayActivity : AppCompatActivity() {
     private var started = false
     private var allFailed = false
     private var infoText = ""
+
+    /** Real resolution of the stream that is playing, e.g. "1080P"; remembered per line so the line chips can show it. */
+    private var resolution = ""
+    private val lineQuality = HashMap<String, String>()
 
     private var player: ExoPlayer? = null
     private var playJob: Job? = null
@@ -268,8 +273,7 @@ class PlayActivity : AppCompatActivity() {
                     handler.removeCallbacks(stall)
                     started = true
                     pendingStart = 0
-                    val label = current?.label.orEmpty()
-                    setInfo(if (isLive) "正在播放：$title · $label" else "正在播放：${epName()} · $label")
+                    setInfo(playingText())
                 }
                 Player.STATE_ENDED -> if (!isLive) {
                     val count = details[curSrc]?.lines?.getOrNull(curLine)?.episodes?.size ?: 0
@@ -278,11 +282,35 @@ class PlayActivity : AppCompatActivity() {
             }
         }
 
+        override fun onVideoSizeChanged(videoSize: VideoSize) {
+            if (videoSize.height <= 0) return
+            resolution = qualityLabel(videoSize.height)
+            lineQuality[lineKey()] = resolution
+            if (player?.playbackState == Player.STATE_READY) setInfo(playingText())
+            refreshLists()
+        }
+
         override fun onPlayerError(error: PlaybackException) {
             Log.d("TVP", "player error ${error.errorCodeName} on ${current?.label}")
             setInfo("这条线路播放失败，正在换下一条…")
             failOver()
         }
+    }
+
+    private fun playingText(): String {
+        val base = if (isLive) "正在播放：$title · ${current?.label.orEmpty()}" else "正在播放：${epName()} · ${current?.label.orEmpty()}"
+        return if (resolution.isEmpty()) base else "$base · $resolution"
+    }
+
+    private fun lineKey() = if (isLive) "live:$curLine" else "$curSrc:$curLine"
+
+    private fun qualityLabel(height: Int) = when {
+        height >= 2160 -> "4K"
+        height >= 1440 -> "2K"
+        height >= 1080 -> "1080P"
+        height >= 720 -> "720P"
+        height >= 480 -> "480P"
+        else -> "${height}P"
     }
 
     private fun playCurrent(startMs: Long) {
@@ -310,6 +338,7 @@ class PlayActivity : AppCompatActivity() {
         handler.removeCallbacks(stall)
         player?.stop()
         started = false
+        resolution = ""
         playJob = lifecycleScope.launch {
             while (true) {
                 val cand = nextCandidate()
@@ -443,12 +472,18 @@ class PlayActivity : AppCompatActivity() {
 
     private fun refreshLists() {
         if (isLive) {
-            lineAdapter.submit(liveUrls.indices.map { "线路${it + 1}" }, curLine)
+            lineAdapter.submit(liveUrls.indices.map { "线路${it + 1}" + (lineQuality["live:$it"]?.let { q -> " $q" } ?: "") }, curLine)
             return
         }
         val d = details[curSrc] ?: return
         val names = d.lines.map { it.name }
-        lineAdapter.submit(names.mapIndexed { i, n -> if (names.count { it == n } > 1) "$n ${i + 1}" else n }, curLine)
+        lineAdapter.submit(
+            names.mapIndexed { i, n ->
+                val name = if (names.count { it == n } > 1) "$n ${i + 1}" else n
+                lineQuality["$curSrc:$i"]?.let { q -> "$name · $q" } ?: name
+            },
+            curLine,
+        )
         val episodes = d.lines.getOrNull(curLine)?.episodes ?: emptyList()
         epAdapter.submit(episodes.map { it.name }, curEp)
         epLabel?.text = "选集（共 ${episodes.size} 集）"

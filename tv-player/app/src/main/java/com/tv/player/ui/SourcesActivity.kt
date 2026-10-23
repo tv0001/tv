@@ -29,7 +29,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
 
-class SourcesActivity : AppCompatActivity() {
+class SourcesActivity : BaseActivity() {
     private class Row(
         val key: String,
         val title: String,
