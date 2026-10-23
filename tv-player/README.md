@@ -81,4 +81,4 @@ $ANDROID_HOME/build-tools/<版本>/apksigner sign --ks <你的.keystore> \
 python3 scripts/make-update-manifest.py releases/TV-Player-1.0.2.apk "<APK 的下载地址>" "更新说明" > ../tvbox-check/out/app-version.json
 ```
 
-把 APK 和 `app-version.json` 提交到仓库，已安装的 App 就会在下次检查时提示更新。当前 `releases/` 里的包用的是本机 Android debug 密钥，只适合自己用；要给别人用，请换成自己保管的发布密钥。
+把 APK 和 `app-version.json` 提交到仓库，已安装的 App 就会在下次检查时提示更新。`releases/` 里请保留最近两个版本：公共代理（gh-proxy）会缓存版本说明一段时间，旧说明指向的 APK 如果被删掉，用户会下载失败。当前 `releases/` 里的包用的是本机 Android debug 密钥，只适合自己用；要给别人用，请换成自己保管的发布密钥。
