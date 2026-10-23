@@ -32,6 +32,14 @@ object Store {
     /** "auto" follows the system, "tv" / "phone" force a layout (many cheap TV boxes do not report TV mode). */
     fun uiMode(): String = prefs.getString("ui_mode", "auto") ?: "auto"
 
+    /**
+     * How playback lines are ordered. "smart": test the lines first, smooth ones before sluggish ones, then sharpest
+     * (skipped on metered networks to save data); "smart_always": the same, also on mobile data; "order": as listed.
+     */
+    fun lineMode(): String = prefs.getString("line_mode", "smart") ?: "smart"
+
+    fun setLineMode(mode: String) = prefs.edit().putString("line_mode", mode).apply()
+
     /** TV only: "auto" (design size 960dp across), "small" or "large". */
     fun tvScale(): String = prefs.getString("tv_scale", "auto") ?: "auto"
 

@@ -336,7 +336,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="界面模式"
+                    android:text="显示与播放"
                     android:textAppearance="@style/TextAppearance.TvPlayer.Section" />
 
                 <TextView
@@ -476,6 +476,55 @@
                         android:layout_height="wrap_content"
                         android:checkable="true"
                         android:text="站点最近更新" />
+
+                </com.google.android.material.chip.ChipGroup>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="选线方式"
+                    android:textAppearance="@style/TextAppearance.TvPlayer.Section" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="智能：开播前对各条线路测速，先保证流畅，再在流畅的线路里挑最清晰的。每次要下载一两 MB，所以用流量时默认不测。手动点过某条线路就以你选的为准。"
+                    android:textAppearance="?attr/textAppearanceBodySmall"
+                    android:textColor="@color/on_surface_variant" />
+
+                <com.google.android.material.chip.ChipGroup
+                    android:id="@+id/lineMode"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    app:selectionRequired="true"
+                    app:singleSelection="true">
+
+                    <com.google.android.material.chip.Chip
+                        android:id="@+id/lineSmart"
+                        style="@style/Widget.Material3.Chip.Filter"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:checkable="true"
+                        android:text="智能" />
+
+                    <com.google.android.material.chip.Chip
+                        android:id="@+id/lineSmartAlways"
+                        style="@style/Widget.Material3.Chip.Filter"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:checkable="true"
+                        android:text="智能（流量下也测）" />
+
+                    <com.google.android.material.chip.Chip
+                        android:id="@+id/lineOrder"
+                        style="@style/Widget.Material3.Chip.Filter"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:checkable="true"
+                        android:text="按顺序" />
 
                 </com.google.android.material.chip.ChipGroup>
 

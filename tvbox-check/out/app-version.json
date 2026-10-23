@@ -1,9 +1,9 @@
 {
-  "versionCode": 5,
-  "versionName": "1.0.4",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.4.apk",
-  "sha256": "dc7ba1364a78a6d83302e33fa4e010e8c3f34b69cfca7f70e42fe365a05bd697",
-  "size": 2865589,
-  "notes": "新增：播放时自动检测视频真实分辨率（4K / 1080P / 720P），显示在状态栏并标在线路上\n新增：电视分辨率适配，按真实像素统一排版，设置里可调界面大小\n优化：搜索页间距更舒服，最近搜索可逐条删除和一键清空",
+  "versionCode": 6,
+  "versionName": "1.0.5",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.5.apk",
+  "sha256": "948e642af8728e1183e9d4267f1250cd8473fb0635033ffff71643838190f9b0",
+  "size": 2869685,
+  "notes": "新增：智能选线，开播前先测速，优先选不卡顿的线路，再挑最清晰的\n优化：坏线路和卡死线路不再拖慢起播，好线路几秒内就能开始播放\n设置里可切换选线方式（智能 / 始终测速 / 按顺序）",
   "force": false
 }

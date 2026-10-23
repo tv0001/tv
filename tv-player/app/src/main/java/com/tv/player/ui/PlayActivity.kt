@@ -2,6 +2,7 @@ package com.tv.player.ui
 
 import android.app.UiModeManager
 import android.content.Context
+import android.net.ConnectivityManager
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.res.ColorStateList
@@ -54,6 +55,7 @@ import com.tv.player.core.Cms
 import com.tv.player.core.Dlna
 import com.tv.player.core.DlnaDevice
 import com.tv.player.core.Http
+import com.tv.player.core.LineProbe
 import com.tv.player.core.Library
 import com.tv.player.core.Resolve
 import com.tv.player.core.Store
@@ -65,6 +67,11 @@ import com.tv.player.data.toJsonString
 import com.tv.player.data.vodItemsFromJson
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
@@ -117,6 +124,11 @@ class PlayActivity : BaseActivity() {
     /** Real resolution of the stream that is playing, e.g. "1080P"; remembered per line so the line chips can show it. */
     private var resolution = ""
     private val lineQuality = HashMap<String, String>()
+
+    /** Speed-test results per candidate URL; the line order follows them (smooth first, then sharpest). */
+    private val probes = HashMap<String, LineProbe.Result>()
+    private var pinned = false // the user picked a line by hand: keep it first
+    private var needWarm = false // test the lines before the first start
 
     private var player: ExoPlayer? = null
     private var playJob: Job? = null
@@ -200,7 +212,10 @@ class PlayActivity : BaseActivity() {
 
         if (isLive) {
             refreshLists()
-            if (liveUrls.isEmpty()) setInfo("这个频道没有可用线路") else playCurrent(0)
+            if (liveUrls.isEmpty()) setInfo("这个频道没有可用线路") else {
+                needWarm = true
+                playCurrent(0)
+            }
         } else {
             lifecycleScope.launch { initVod() }
         }
@@ -340,6 +355,10 @@ class PlayActivity : BaseActivity() {
         started = false
         resolution = ""
         playJob = lifecycleScope.launch {
+            if (needWarm) {
+                needWarm = false
+                warmUp()
+            }
             while (true) {
                 val cand = nextCandidate()
                 if (cand == null) {
@@ -349,7 +368,7 @@ class PlayActivity : BaseActivity() {
                     return@launch
                 }
                 setInfo("正在连接：${cand.label}")
-                val stream = if (isLive) cand.url else Resolve.stream(cand.url)
+                val stream = probes[cand.url]?.takeIf { it.ok }?.stream ?: if (isLive) cand.url else Resolve.stream(cand.url)
                 Log.d("TVP", "candidate ${cand.label} ${cand.url} -> $stream")
                 if (stream == null) continue
                 current = cand
@@ -371,17 +390,11 @@ class PlayActivity : BaseActivity() {
 
     private suspend fun nextCandidate(): Cand? {
         if (isLive) {
-            val n = liveUrls.size
-            for (k in 0 until n) {
-                val idx = (liveStart + k) % n
-                val url = liveUrls[idx]
-                if (tried.add(url)) {
-                    curLine = idx
-                    refreshLists()
-                    return Cand(url, "线路 ${idx + 1}/$n")
-                }
-            }
-            return null
+            val pick = rank(rawCandidates()).firstOrNull { it.url !in tried } ?: return null
+            tried += pick.url
+            curLine = pick.line
+            refreshLists()
+            return pick
         }
         while (true) {
             candidatesAt(curEp).firstOrNull { it.url !in tried }?.let {
@@ -396,8 +409,81 @@ class PlayActivity : BaseActivity() {
         }
     }
 
+    private fun candidatesAt(ep: Int): List<Cand> = rank(rawVodCandidates(ep))
+
+    private fun rawCandidates(): List<Cand> = if (isLive) {
+        val n = liveUrls.size
+        (0 until n).map { k ->
+            val idx = (liveStart + k) % n
+            Cand(liveUrls[idx], "线路 ${idx + 1}/$n", 0, idx)
+        }
+    } else {
+        rawVodCandidates(curEp)
+    }
+
+    private fun smartOn(): Boolean = when (Store.lineMode()) {
+        "order" -> false
+        "smart_always" -> true
+        else -> !(getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).isActiveNetworkMetered
+    }
+
+    /**
+     * Smooth lines first, the sharpest of them leading; if none is smooth, the fastest; lines that failed the test
+     * last. Lines with no test result keep their listed order after the tested ones. A hand-picked line stays first.
+     */
+    private fun rank(list: List<Cand>): List<Cand> {
+        if (!smartOn() || probes.isEmpty()) return list
+        val head = if (pinned) list.take(1) else emptyList()
+        fun group(c: Cand): Int {
+            val p = probes[c.url] ?: return 2
+            return if (!p.ok) 3 else if (p.smooth) 0 else 1
+        }
+        return head + list.drop(head.size).sortedWith(
+            compareBy<Cand>(
+                { group(it) },
+                { if (group(it) == 0) -(probes[it.url]?.height ?: 0) else 0 },
+                { -(probes[it.url]?.mbps ?: 0.0) },
+            ),
+        )
+    }
+
+    /**
+     * Tests the candidate lines in parallel. Waits for all of them, but leaves early once a smooth line is known
+     * (after 1.5 s) and never longer than 4 s; slow ones keep going in the background and still feed the ranking.
+     */
+    private suspend fun warmUp() {
+        if (!smartOn() || pinned) return
+        setInfo("正在测速选线…")
+        if (!isLive) {
+            // A wider choice: bring in the lines of up to two more sources, in parallel.
+            val extra = items.indices.filter { !details.containsKey(it) }.take(2)
+            if (extra.isNotEmpty()) {
+                coroutineScope {
+                    extra.map { i -> async { i to withTimeoutOrNull(3_000) { loadDetail(i) } } }.awaitAll()
+                }.forEach { (i, d) -> if (d != null) details[i] = d }
+            }
+        }
+        val cap = minOf(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
+        val fresh = rawCandidates().filter { it.url !in probes }.take(6)
+        if (fresh.size < 2) return
+        val jobs = fresh.map { c ->
+            lifecycleScope.launch {
+                val result = LineProbe.probe(c.url, cap)
+                probes[c.url] = result
+                Log.d("TVP", "probe ${c.label}: $result")
+            }
+        }
+        val t0 = System.currentTimeMillis()
+        while (jobs.any { it.isActive }) {
+            val waited = System.currentTimeMillis() - t0
+            if (waited >= 4_000) break
+            if (waited >= 1_500 && fresh.any { probes[it.url]?.smooth == true }) break
+            delay(100)
+        }
+    }
+
     /** Same episode number in every loaded source: the chosen source first, starting at the chosen line. */
-    private fun candidatesAt(ep: Int): List<Cand> = buildList {
+    private fun rawVodCandidates(ep: Int): List<Cand> = buildList {
         val order = listOf(curSrc) + details.keys.filter { it != curSrc }.sorted()
         for (s in order) {
             val lines = details[s]?.lines ?: continue
@@ -444,6 +530,7 @@ class PlayActivity : BaseActivity() {
         }
         refreshLists()
         updateFavorite()
+        needWarm = true
         playCurrent(start)
     }
 
@@ -451,6 +538,7 @@ class PlayActivity : BaseActivity() {
 
     private fun selectLine(index: Int) {
         if (index < 0) return
+        pinned = true
         if (isLive) {
             liveStart = index
             curLine = index

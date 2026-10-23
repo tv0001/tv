@@ -94,6 +94,24 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             }
         }
 
+        val lineMode = view.findViewById<ChipGroup>(R.id.lineMode)
+        lineMode.check(
+            when (Store.lineMode()) {
+                "smart_always" -> R.id.lineSmartAlways
+                "order" -> R.id.lineOrder
+                else -> R.id.lineSmart
+            },
+        )
+        lineMode.setOnCheckedStateChangeListener { _, ids ->
+            Store.setLineMode(
+                when (ids.firstOrNull()) {
+                    R.id.lineSmartAlways -> "smart_always"
+                    R.id.lineOrder -> "order"
+                    else -> "smart"
+                },
+            )
+        }
+
         val hotMode = view.findViewById<ChipGroup>(R.id.hotMode)
         hotMode.check(if (Store.hotMode() == "cms") R.id.hotCms else R.id.hotAuto)
         hotMode.setOnCheckedStateChangeListener { _, ids ->
