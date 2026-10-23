@@ -34,7 +34,10 @@ data class VodDetail(
     val score: String = "",
 )
 
-data class LiveChannel(val name: String, val group: String, val urls: List<String>)
+/** A channel can play back its past programmes: [template] is the source's address pattern, [days] how far back. */
+data class Catchup(val template: String, val days: Int)
+
+data class LiveChannel(val name: String, val group: String, val urls: List<String>, val catchup: Catchup? = null)
 
 /** Same title from one or more sources. */
 data class VodGroup(val key: String, val title: String, val pic: String, val remarks: String, val items: List<VodItem>, val badge: String = "")

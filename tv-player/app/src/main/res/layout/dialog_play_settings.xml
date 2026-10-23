@@ -13,6 +13,37 @@
         android:paddingEnd="24dp"
         android:paddingBottom="4dp">
 
+        <!-- programme replay (live channels that offer past programmes) -->
+        <LinearLayout
+            android:id="@+id/replayBox"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:visibility="gone">
+
+            <TextView
+                style="@style/PlaySettingsLabel"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:text="节目回看" />
+
+            <TextView
+                android:id="@+id/replayOpen"
+                style="@style/PlaySettingsHint"
+                android:layout_width="wrap_content"
+                android:background="?attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center_vertical"
+                android:minHeight="48dp"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:text="看看播过的节目 ›"
+                android:textColor="@color/accent" />
+
+        </LinearLayout>
+
         <!-- speed -->
         <LinearLayout
             android:id="@+id/speedBox"
@@ -30,6 +61,89 @@
                 android:layout_height="wrap_content"
                 app:selectionRequired="true"
                 app:singleSelection="true" />
+
+        </LinearLayout>
+
+        <!-- picture fit -->
+        <TextView
+            style="@style/PlaySettingsLabel"
+            android:layout_marginTop="20dp"
+            android:text="画面" />
+
+        <com.google.android.material.button.MaterialButtonToggleGroup
+            android:id="@+id/fitGroup"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:selectionRequired="true"
+            app:singleSelection="true" />
+
+        <!-- subtitles and audio tracks -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                style="@style/PlaySettingsLabel"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:text="字幕" />
+
+            <TextView
+                android:id="@+id/subtitleValue"
+                style="@style/PlaySettingsHint"
+                android:layout_width="wrap_content"
+                android:background="?attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center_vertical|end"
+                android:minHeight="48dp"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:textColor="@color/accent" />
+
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/importSub"
+            style="@style/PlaySettingsHint"
+            android:layout_width="wrap_content"
+            android:background="?attr/selectableItemBackground"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center_vertical"
+            android:minHeight="48dp"
+            android:text="导入字幕文件（srt / vtt / ass）"
+            android:textColor="@color/accent" />
+
+        <LinearLayout
+            android:id="@+id/audioBox"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:visibility="gone">
+
+            <TextView
+                style="@style/PlaySettingsLabel"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:text="音轨" />
+
+            <TextView
+                android:id="@+id/audioValue"
+                style="@style/PlaySettingsHint"
+                android:layout_width="wrap_content"
+                android:background="?attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center_vertical|end"
+                android:minHeight="48dp"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:textColor="@color/accent" />
 
         </LinearLayout>
 

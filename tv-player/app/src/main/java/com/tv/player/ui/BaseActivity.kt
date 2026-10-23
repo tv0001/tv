@@ -36,4 +36,14 @@ open class BaseActivity : AppCompatActivity() {
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(UiScale.wrap(newBase))
     }
+
+    override fun onResume() {
+        super.onResume()
+        RemoteControl.attach(this)
+    }
+
+    override fun onPause() {
+        RemoteControl.detach(this)
+        super.onPause()
+    }
 }

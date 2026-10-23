@@ -1,5 +1,7 @@
 package com.tv.player.ui
 
+import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.addCallback
 import androidx.appcompat.app.AppCompatActivity
@@ -8,12 +10,21 @@ import androidx.lifecycle.lifecycleScope
 import com.google.android.material.navigation.NavigationBarView
 import com.tv.player.R
 import com.tv.player.core.AppUpdate
+import com.tv.player.core.Library
 import com.tv.player.core.Store
 import com.tv.player.core.Tracker
 import com.tv.player.core.Updater
 import kotlinx.coroutines.launch
 
 class MainActivity : BaseActivity() {
+    companion object {
+        private const val EXTRA_OPEN_KEY = "open_key"
+
+        /** Opens the series [key] straight away: used by notifications and the TV home screen's continue-watching row. */
+        fun openIntent(context: Context, key: String): Intent =
+            Intent(context, MainActivity::class.java).putExtra(EXTRA_OPEN_KEY, key)
+    }
+
     private val tags = listOf("search", "live", "mine", "settings")
     private val navIds = listOf(R.id.nav_search, R.id.nav_live, R.id.nav_mine, R.id.nav_settings)
 
@@ -22,6 +33,7 @@ class MainActivity : BaseActivity() {
         setContentView(if (useSideNav()) R.layout.activity_main_tv else R.layout.activity_main)
         // TV sets can crop the picture edges (overscan): keep content inside the 5% safe area.
         if (isTv()) findViewById<android.view.ViewGroup>(android.R.id.content).getChildAt(0).setPadding(dp(24), dp(27), dp(48), dp(27))
+        openFrom(intent)
 
         val fm = supportFragmentManager
         if (savedInstanceState == null) {
@@ -64,6 +76,19 @@ class MainActivity : BaseActivity() {
                 result.info?.let { UpdateUi.prompt(this@MainActivity, it) }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        openFrom(intent)
+    }
+
+    /** A notification or a home-screen tile asked for a series: open its details page (playback resumes from there). */
+    private fun openFrom(intent: Intent?) {
+        val key = intent?.getStringExtra(EXTRA_OPEN_KEY) ?: return
+        intent.removeExtra(EXTRA_OPEN_KEY)
+        val entry = Library.progress(key) ?: Library.favorites().firstOrNull { it.key == key } ?: return
+        PlayActivity.startVod(this, entry.toGroup(withProgress = false))
     }
 
     override fun onResume() {

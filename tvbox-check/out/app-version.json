@@ -1,9 +1,9 @@
 {
-  "versionCode": 9,
-  "versionName": "1.0.8",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.8.apk",
-  "sha256": "0b571d16cf8642a551c5acbce06ce29e180f876466c9b2b68af63db04b65e30e",
-  "size": 2981591,
-  "notes": "优化：点播起播更快，打开就播，不再先等测速\n优化：继续观看直接用上次的视频地址开播，优先用直连线路，记住每部片能播的源和线路\n优化：起播慢或播放中才在后台测速，坏服务器自动排后，换源不用再等\n修复：续播集数、手动选线被测速覆盖、片源详情重复请求等问题",
+  "versionCode": 10,
+  "versionName": "1.0.9",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.9.apk",
+  "sha256": "eb988a1ee417e37ab8e8d07290ad406351d1e246bced2199dc2ef0bb0beb2300",
+  "size": 3113482,
+  "notes": "新增：追剧新集后台通知（App 没打开也会提醒）\n新增：手机遥控器（扫码页里的遥控按钮，可保持 30 分钟）\n新增：字幕与音轨切换，可导入本地 srt / vtt / ass 字幕（GBK 中文字幕自动识别）\n新增：画面比例（适应 / 填满 / 拉伸）\n新增：电视桌面「继续观看」行（仅电视）\n新增：直播回看（M3U 源带 catchup-source 的频道，可回看最近 7 天节目）\n改进：线路列表合并所有源的线路，点「全部 N 条」在面板里选择\n修复：电视版部分线路只显示两条的问题",
   "force": false
 }

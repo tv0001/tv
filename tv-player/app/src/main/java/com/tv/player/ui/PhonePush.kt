@@ -33,6 +33,8 @@ object PhonePush {
                 }
             }
 
+            override fun onKey(name: String): String = RemoteControl.press(name)
+
             override suspend fun onVod(name: String, api: String): String {
                 val clean = api.trim()
                 if (!clean.startsWith("http://") && !clean.startsWith("https://")) return "请输入 http(s) 开头的接口地址"
@@ -65,13 +67,24 @@ object PhonePush {
             view.findViewById<TextView>(R.id.pushUrl).text = url
             view.findViewById<ImageView>(R.id.pushQr).setImageBitmap(qr(url, 600))
         }
+        // Closing the dialog normally stops the page. "保持遥控" keeps it up for a while, so the phone can drive the
+        // screen once the dialog is gone (a dialog covers the screen, so the remote's keys could not reach it).
+        var keepForRemote = false
         dialog = MaterialAlertDialogBuilder(activity)
-            .setTitle("用手机给电视输入")
+            .setTitle("用手机输入或遥控电视")
             .setView(view)
+            .setNeutralButton("保持遥控 30 分钟") { _, _ ->
+                keepForRemote = true
+                Toast.makeText(activity, "30 分钟内可以用手机遥控电视", Toast.LENGTH_LONG).show()
+            }
             .setNegativeButton("关闭", null)
-            .setOnDismissListener { server.stop() }
+            .setOnDismissListener {
+                if (keepForRemote) main.postDelayed({ server.stop() }, REMOTE_MS) else server.stop()
+            }
             .show()
     }
+
+    private const val REMOTE_MS = 30 * 60_000L
 
     private fun qr(text: String, size: Int): Bitmap {
         val matrix = QRCodeWriter().encode(text, BarcodeFormat.QR_CODE, size, size, mapOf(com.google.zxing.EncodeHintType.MARGIN to 2))

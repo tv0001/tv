@@ -3,8 +3,10 @@ package com.tv.player.ui
 import android.Manifest
 import android.app.PictureInPictureParams
 import android.app.UiModeManager
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.net.ConnectivityManager
+import android.net.Uri
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
@@ -37,6 +39,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.addCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
@@ -45,11 +48,14 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
@@ -58,6 +64,7 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -71,6 +78,7 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import coil.load
 import com.tv.player.R
 import com.tv.player.core.Cms
+import com.tv.player.core.CatchupUrl
 import com.tv.player.core.Dlna
 import com.tv.player.core.Epg
 import com.tv.player.core.DlnaDevice
@@ -79,7 +87,9 @@ import com.tv.player.core.LineProbe
 import com.tv.player.core.Library
 import com.tv.player.core.Resolve
 import com.tv.player.core.Store
+import com.tv.player.core.Subtitles
 import com.tv.player.core.Tracker
+import com.tv.player.data.Catchup
 import com.tv.player.data.LiveChannel
 import com.tv.player.data.VodDetail
 import com.tv.player.data.VodGroup
@@ -88,14 +98,19 @@ import com.tv.player.data.toJsonString
 import com.tv.player.data.vodItemsFromJson
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -109,6 +124,8 @@ class PlayActivity : BaseActivity() {
         private const val RESCUE_MS = 4_000L
         private const val BACKGROUND_PROBE_MS = 10_000L
         private const val QUICK_MS = 6 * 3600_000L
+        private const val MAX_SHOWS = 200 // programmes listed for replay
+        private const val LINES_FOLD = 2 // more lines than this get the expand row
         private val DIRECT = Regex("\\.(m3u8|mp4|flv|mkv)(\\?|$)", RegexOption.IGNORE_CASE)
 
         fun startVod(context: Context, group: VodGroup) = context.startActivity(
@@ -120,7 +137,9 @@ class PlayActivity : BaseActivity() {
         fun startLive(context: Context, channel: LiveChannel) = context.startActivity(
             Intent(context, PlayActivity::class.java)
                 .putExtra("live", true).putExtra("title", channel.name).putExtra("group", channel.group)
-                .putStringArrayListExtra("urls", ArrayList(channel.urls)),
+                .putStringArrayListExtra("urls", ArrayList(channel.urls))
+                .putExtra("catchup_template", channel.catchup?.template.orEmpty())
+                .putExtra("catchup_days", channel.catchup?.days ?: 0),
         )
     }
 
@@ -134,10 +153,11 @@ class PlayActivity : BaseActivity() {
     private var liveUrls: List<String> = emptyList()
     private val sources by lazy { Store.sources().associateBy { it.key } }
 
-    // Vod state: details are loaded lazily, one source at a time, only when the earlier ones ran out of lines.
+    // Vod state: details of every source load in the background; the line list shows the lines of all of them.
     private val details = HashMap<Int, VodDetail?>()
     private var curSrc = 0
     private var curLine = 0
+    private var lineRefs: List<Pair<Int, Int>> = emptyList() // the line list's rows: (source index, line index)
     private var curEp = 0
     private var liveStart = 0
 
@@ -200,6 +220,13 @@ class PlayActivity : BaseActivity() {
 
     // Skip intro / outro, speed, sleep timer, leaving the app.
     private var introDone = false
+
+    // Subtitle file the user imported (a UTF-8 copy in the cache), the picture fit, and the programme replay of a live channel.
+    private var extSubtitle: Uri? = null
+    private var extSubtitleMime: String? = null
+    private val pickSubtitle = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(::importSubtitle) }
+    private var catchup: Catchup? = null // the channel's playback addresses for past programmes, if it has any
+    private var replayMode = false // a past programme is playing in place of the live picture; "回到直播" leaves it
     private var outroDone = false
     private var speedBoost = false
     private var sleepAtMs = 0L // SystemClock.elapsedRealtime() deadline; 0 = off
@@ -232,7 +259,10 @@ class PlayActivity : BaseActivity() {
     private var episodesView: RecyclerView? = null
     private var epLabel: TextView? = null
     private var hud: TextView? = null
-    private val lineAdapter = ChipAdapter { selectLine(it) }
+    private val lineAdapter = ChipAdapter { onLineClick(it) }
+    private var lineCount = 0 // the rows that are lines; the row after them opens the panel listing all of them
+    private var lineLabels: List<String> = emptyList()
+    private var lineSelected = -1
     /** TV: episodes are shown 30 at a time; [epOffset] is the first episode of the shown range. */
     private var epOffset = 0
     private var epGroup = -1 // the range the user picked; -1 = follow the playing episode
@@ -275,6 +305,8 @@ class PlayActivity : BaseActivity() {
         if (isLive) {
             liveUrls = intent.getStringArrayListExtra("urls") ?: emptyList()
             liveGroup = intent.getStringExtra("group").orEmpty()
+            catchup = intent.getStringExtra("catchup_template")?.takeIf { it.isNotEmpty() }
+                ?.let { Catchup(it, intent.getIntExtra("catchup_days", 0)) }
         } else {
             key = intent.getStringExtra("key").orEmpty()
             pic = intent.getStringExtra("pic").orEmpty()
@@ -354,6 +386,7 @@ class PlayActivity : BaseActivity() {
     private fun bindViews() {
         playerView = findViewById(R.id.player)
         playerView.player = player
+        playerView.resizeMode = resizeModeOf(Store.resizeMode())
         findViewById<TextView?>(R.id.title)?.text = title
         findViewById<View?>(R.id.back)?.setOnClickListener { onBackPressedDispatcher.onBackPressed() }
         panel = findViewById(R.id.panel)
@@ -484,7 +517,7 @@ class PlayActivity : BaseActivity() {
 
     private fun updateProgress() {
         val p = player ?: return
-        progressText?.text = if (isLive || p.duration <= 0) "" else "${formatTime(p.currentPosition)} / ${formatTime(p.duration)}"
+        progressText?.text = if (!canSeek() || p.duration <= 0) "" else "${formatTime(p.currentPosition)} / ${formatTime(p.duration)}"
     }
 
     private fun applySystemBars() {
@@ -510,8 +543,11 @@ class PlayActivity : BaseActivity() {
                     // Speed tests still running would only take bandwidth from the line that just started.
                     probeJobs.forEach { it.cancel() }
                     probeJobs = emptyList()
-                    rememberLine()
-                    (resolvedUrl ?: current?.url)?.let { Store.clearBadHost(it) }
+                    // A replayed programme's address is not a line of the channel: nothing to remember for it.
+                    if (!replayMode) {
+                        rememberLine()
+                        (resolvedUrl ?: current?.url)?.let { Store.clearBadHost(it) }
+                    }
                     handler.removeCallbacks(backgroundProbe)
                     handler.postDelayed(backgroundProbe, BACKGROUND_PROBE_MS)
                     handler.removeCallbacks(stall)
@@ -521,7 +557,7 @@ class PlayActivity : BaseActivity() {
                     if (isLive) refreshEpg() else skipIntro(resumed)
                     setInfo(playingText())
                 }
-                Player.STATE_ENDED -> if (!isLive) {
+                Player.STATE_ENDED -> if (replayMode) setInfo("回看已播完，可以换一段，或点「回到直播」") else if (!isLive) {
                     if (sleepAfterEp) {
                         sleepNow("这一集播完了，已按睡眠定时停止")
                         return
@@ -535,7 +571,7 @@ class PlayActivity : BaseActivity() {
         override fun onVideoSizeChanged(videoSize: VideoSize) {
             if (videoSize.height <= 0) return
             resolution = qualityLabel(videoSize.height)
-            lineQuality[lineKey()] = resolution
+            if (!replayMode) lineQuality[lineKey()] = resolution // a replayed programme's picture is not a line's quality
             if (player?.playbackState == Player.STATE_READY) setInfo(playingText())
             refreshLists()
         }
@@ -585,7 +621,7 @@ class PlayActivity : BaseActivity() {
     private fun playingText(): String {
         val base = if (isLive) "正在播放：$title · ${current?.label.orEmpty()}" else "正在播放：${epName()} · ${current?.label.orEmpty()}"
         val line = if (resolution.isEmpty()) base else "$base · $resolution"
-        return if (isLive) epgText()?.let { "$line\n$it" } ?: line else line
+        return if (isLive && !replayMode) epgText()?.let { "$line\n$it" } ?: line else line
     }
 
     private fun clock(minutes: Int) = "%02d:%02d".format(minutes / 60 % 24, minutes % 60)
@@ -615,6 +651,7 @@ class PlayActivity : BaseActivity() {
     }
 
     private fun playCurrent(startMs: Long, first: Cand? = null, firstStream: String? = null) {
+        replayMode = false
         quickFirst = first?.let { it to firstStream }
         gen++
         handler.removeCallbacks(backgroundProbe)
@@ -633,6 +670,11 @@ class PlayActivity : BaseActivity() {
      * line is already being picked, the second report must be ignored: restarting would drop the line just picked.
      */
     private fun failOver() {
+        // A replayed programme has no other line to fall back to: say so and let the viewer choose.
+        if (replayMode) {
+            setInfo("这段回看播放失败，可以换一段，或点「回到直播」")
+            return
+        }
         if (playJob?.isActive == true) return
         // A remembered live line that no longer starts should not keep costing a failed attempt every time.
         if (isLive && !started && current?.url != null && current?.url == Store.liveLine(title)) {
@@ -674,9 +716,7 @@ class PlayActivity : BaseActivity() {
                 if (stream == null) continue
                 current = cand
                 resolvedUrl = stream
-                val media = MediaItem.Builder().setUri(stream).apply {
-                    if (stream.contains(".m3u8", ignoreCase = true)) setMimeType(MimeTypes.APPLICATION_M3U8)
-                }.build()
+                val media = mediaFor(stream)
                 player?.apply {
                     // TIME_UNSET lets live streams start at the live edge instead of the oldest segment.
                     setMediaItem(media, if (pendingStart > 0) pendingStart else C.TIME_UNSET)
@@ -819,13 +859,16 @@ class PlayActivity : BaseActivity() {
         return true
     }
 
-    /** Loads up to four more sources' details in parallel in the background, ready for a failover. */
+    /**
+     * Loads every source's details in the background, six at a time; each one that arrives adds its lines to the list
+     * (and makes the failover choice wider).
+     */
     private fun prefetchDetails() {
-        val todo = items.indices.filter { !details.containsKey(it) }.take(4)
+        val todo = items.indices.filter { !details.containsKey(it) }
         if (todo.isEmpty()) return
         lifecycleScope.launch {
-            todo.map { i -> async { detailOf(i) } }.awaitAll()
-            refreshLists()
+            val gate = Semaphore(6)
+            todo.map { i -> async { gate.withPermit { detailOf(i) }; refreshLists() } }.awaitAll()
         }
     }
 
@@ -920,9 +963,12 @@ class PlayActivity : BaseActivity() {
             curLine = index
             liveUrls.getOrNull(index)?.let { Store.setLiveLine(title, it) }
         } else {
-            val d = details[curSrc] ?: return
-            curLine = index
-            curEp = curEp.coerceAtMost(maxOf(0, (d.lines.getOrNull(index)?.episodes?.size ?: 1) - 1))
+            // The row picked may be a line of another source: that source plays from now on.
+            val (s, li) = lineRefs.getOrNull(index) ?: return
+            val d = details[s] ?: return
+            curSrc = s
+            curLine = li
+            curEp = curEp.coerceAtMost(maxOf(0, (d.lines.getOrNull(li)?.episodes?.size ?: 1) - 1))
         }
         refreshLists()
         playCurrent(0)
@@ -936,21 +982,80 @@ class PlayActivity : BaseActivity() {
         playCurrent(0)
     }
 
+    /** Clicking a line plays it; the row after the lines opens the panel that lists all of them. */
+    private fun onLineClick(index: Int) {
+        if (index >= lineCount) showAllLines() else selectLine(index)
+    }
+
+    /** Every line in a panel over the page, so the episodes below stay where they are. Picking one closes it. */
+    private fun showAllLines() {
+        // A snapshot: sources keep loading while the panel is open, and the row picked must be the one shown.
+        val refs = lineRefs
+        val live = isLive
+        var allLines: androidx.appcompat.app.AlertDialog? = null
+        val chips = ChipAdapter(fill = true) { index ->
+            allLines?.dismiss()
+            if (live) selectLine(index) else refs.getOrNull(index)?.let { (s, li) -> pickVodLine(s, li) }
+        }
+        chips.submit(lineLabels, lineSelected)
+        val grid = RecyclerView(this).apply {
+            layoutManager = GridLayoutManager(this@PlayActivity, 3)
+            adapter = chips
+            clipToPadding = false
+            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(360))
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+        }
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle("全部线路（${lineLabels.size} 条）")
+            .setView(grid)
+            .setNegativeButton("关闭", null)
+            .show()
+        allLines = dialog
+        RemoteControl.cover(dialog)
+    }
+
+    /** Plays one line of one source, from the all-lines panel. */
+    private fun pickVodLine(s: Int, li: Int) {
+        val d = details[s] ?: return
+        pinned = true
+        curSrc = s
+        curLine = li
+        curEp = curEp.coerceAtMost(maxOf(0, (d.lines.getOrNull(li)?.episodes?.size ?: 1) - 1))
+        refreshLists()
+        playCurrent(0)
+    }
+
+    /** The line rows stay one row that scrolls sideways; a last row opens the panel when there are more than a few. */
+    private fun submitLines(labels: List<String>, selected: Int) {
+        lineCount = labels.size
+        lineLabels = labels
+        lineSelected = selected
+        val more = if (labels.size > LINES_FOLD) listOf("全部 ${labels.size} 条 ▾") else emptyList()
+        lineAdapter.submit(labels + more, selected)
+    }
+
     private fun refreshLists() {
         if (isLive) {
-            lineAdapter.submit(liveUrls.indices.map { "线路${it + 1}" + (lineQuality["live:$it"]?.let { q -> " $q" } ?: "") }, curLine)
+            submitLines(liveUrls.indices.map { "线路${it + 1}" + (lineQuality["live:$it"]?.let { q -> " $q" } ?: "") }, curLine)
             return
         }
+        // The lines of every loaded source in one list, each with its source's name; picking one switches to that source.
+        val refs = ArrayList<Pair<Int, Int>>()
+        val labels = ArrayList<String>()
+        for (s in items.indices) {
+            val lines = details[s]?.lines ?: continue
+            val names = lines.map { it.name }
+            lines.forEachIndexed { i, line ->
+                val name = if (names.count { it == line.name } > 1) "${line.name} ${i + 1}" else line.name
+                val label = "${items[s].sourceName} · $name"
+                labels += lineQuality["$s:$i"]?.let { q -> "$label · $q" } ?: label
+                refs += s to i
+            }
+        }
+        lineRefs = refs
+        submitLines(labels, refs.indexOf(curSrc to curLine))
         val d = details[curSrc] ?: return
         fillDetail()
-        val names = d.lines.map { it.name }
-        lineAdapter.submit(
-            names.mapIndexed { i, n ->
-                val name = if (names.count { it == n } > 1) "$n ${i + 1}" else n
-                lineQuality["$curSrc:$i"]?.let { q -> "$name · $q" } ?: name
-            },
-            curLine,
-        )
         val episodes = d.lines.getOrNull(curLine)?.episodes ?: emptyList()
         val groups = findViewById<RecyclerView?>(R.id.epGroups)
         if (groups != null && episodes.size > EP_GROUP) {
@@ -981,15 +1086,28 @@ class PlayActivity : BaseActivity() {
         val p = player ?: return
         val pos = p.currentPosition
         val nearEnd = p.duration > 0 && pos > p.duration - 15_000
-        Library.saveProgress(Library.Entry(key, title, pic, items, curEp, epName(), if (nearEnd) 0 else pos))
+        val entry = Library.Entry(key, title, pic, items, curEp, epName(), if (nearEnd) 0 else pos)
+        Library.saveProgress(entry)
+        // The launcher's provider is a cross-process call: keep it off the main thread.
+        val duration = p.duration
+        lifecycleScope.launch(Dispatchers.IO) { WatchNext.publish(this@PlayActivity, entry, duration) }
     }
 
     // ---- favorites -----------------------------------------------------------------------------------------------
 
     private fun toggleFavorite() {
         val count = details[curSrc]?.let { Tracker.countOf(it) } ?: 0
-        Library.setFavorite(Library.Entry(key, title, pic, items, seen = count, latest = count), !Library.isFavorite(key))
+        val follow = !Library.isFavorite(key)
+        Library.setFavorite(Library.Entry(key, title, pic, items, seen = count, latest = count), follow)
+        if (follow) askNotifications()
         updateFavorite()
+    }
+
+    /** New episodes are announced by notification: ask once, when the user starts following a series. */
+    private fun askNotifications() {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 8)
+        }
     }
 
     private fun updateFavorite() {
@@ -1092,6 +1210,7 @@ class PlayActivity : BaseActivity() {
         probeJobs = emptyList()
         title = channel.name
         liveUrls = channel.urls
+        catchup = channel.catchup
         lineQuality.clear()
         current = null
         started = false
@@ -1170,6 +1289,38 @@ class PlayActivity : BaseActivity() {
             }
         }
 
+        // picture: letterbox, crop to fill, or stretch
+        val fitModes = listOf("fit", "zoom", "fill")
+        fill(view.findViewById(R.id.fitGroup), listOf("适应", "填满", "拉伸"), fitModes.indexOf(Store.resizeMode()).coerceAtLeast(0)) {
+            Store.setResizeMode(fitModes[it])
+            playerView.resizeMode = resizeModeOf(fitModes[it])
+        }
+
+        // subtitles and audio tracks of the stream now playing, and subtitle files from the storage
+        val subtitleValue = view.findViewById<TextView>(R.id.subtitleValue)
+        val audioBox = view.findViewById<View>(R.id.audioBox)
+        val audioValue = view.findViewById<TextView>(R.id.audioValue)
+        fun showTracks() {
+            subtitleValue.text = trackValue(C.TRACK_TYPE_TEXT, trackOptions(C.TRACK_TYPE_TEXT), "关闭")
+            val audio = trackOptions(C.TRACK_TYPE_AUDIO)
+            audioBox.visibility = if (audio.size > 1) View.VISIBLE else View.GONE
+            audioValue.text = trackValue(C.TRACK_TYPE_AUDIO, audio, "")
+        }
+        showTracks()
+        subtitleValue.setOnClickListener { chooseTrack(C.TRACK_TYPE_TEXT, "字幕", ::showTracks) }
+        audioValue.setOnClickListener { chooseTrack(C.TRACK_TYPE_AUDIO, "音轨", ::showTracks) }
+        view.findViewById<View>(R.id.importSub).setOnClickListener {
+            try {
+                pickSubtitle.launch(arrayOf("*/*"))
+            } catch (e: ActivityNotFoundException) {
+                toast("这台设备没有文件选择器，没法导入字幕")
+            }
+        }
+
+        // programme replay: only for a live channel that offers playback of past programmes
+        view.findViewById<View>(R.id.replayBox).visibility = if (isLive && catchup != null) View.VISIBLE else View.GONE
+        view.findViewById<View>(R.id.replayOpen).setOnClickListener { showReplay() }
+
         // skip intro / outro (per series)
         if (isLive || key.isEmpty()) view.findViewById<View>(R.id.skipBox).visibility = View.GONE else {
             var (intro, outro) = Store.skip(key)
@@ -1247,6 +1398,7 @@ class PlayActivity : BaseActivity() {
         sheet.setContentView(box)
         sheet.behavior.state = BottomSheetBehavior.STATE_EXPANDED
         sheet.behavior.skipCollapsed = true
+        RemoteControl.cover(sheet)
         sheet.show()
     }
 
@@ -1347,6 +1499,174 @@ class PlayActivity : BaseActivity() {
         p.trackSelectionParameters = p.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, !enabled).build()
     }
 
+    // ---- picture, subtitles, audio tracks, programme replay -------------------------------------------------------
+
+    private fun resizeModeOf(mode: String) = when (mode) {
+        "zoom" -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+        "fill" -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+        else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+    }
+
+    /** Files can be seeked, and so can a replayed programme; a live stream has no timeline. */
+    private fun canSeek() = !isLive || replayMode
+
+    /** The item for one stream: the type hint, and the subtitle file the user imported, if any. */
+    private fun mediaFor(stream: String): MediaItem = MediaItem.Builder().setUri(stream).apply {
+        if (stream.contains(".m3u8", ignoreCase = true)) setMimeType(MimeTypes.APPLICATION_M3U8)
+        extSubtitle?.let { uri ->
+            val subtitle = MediaItem.SubtitleConfiguration.Builder(uri)
+                .setMimeType(extSubtitleMime)
+                .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                .build()
+            setSubtitleConfigurations(listOf(subtitle))
+        }
+    }.build()
+
+    /** Restarts the stream now playing so a subtitle file just added shows, from the same place. */
+    private fun reloadStream() {
+        val stream = resolvedUrl ?: return
+        val p = player ?: return
+        val at = if (isLive && !replayMode) C.TIME_UNSET else p.currentPosition
+        p.setMediaItem(mediaFor(stream), at)
+        p.prepare()
+    }
+
+    /** A subtitle file picked from the storage: copied as UTF-8 and loaded into the picture. */
+    private fun importSubtitle(source: Uri) {
+        lifecycleScope.launch {
+            val loaded = withContext(Dispatchers.IO) { Subtitles.load(this@PlayActivity, source) }
+            if (loaded == null) {
+                toast("字幕文件读不了")
+                return@launch
+            }
+            val (name, file) = loaded
+            val mime = Subtitles.mimeOf(name)
+            if (mime == null) {
+                toast("只支持 srt、vtt、ass 字幕")
+                return@launch
+            }
+            extSubtitle = file
+            extSubtitleMime = mime
+            // Subtitles may have been turned off by hand: the new one must show.
+            player?.let { p -> p.trackSelectionParameters = p.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false).build() }
+            reloadStream()
+            toast("已加载字幕：$name")
+        }
+    }
+
+    /** A subtitle or audio track of the picture now playing, and where the player selects it. */
+    private class TrackOption(val label: String, val group: Tracks.Group, val index: Int)
+
+    private fun trackOptions(type: Int): List<TrackOption> {
+        val out = ArrayList<TrackOption>()
+        for (g in player?.currentTracks?.groups.orEmpty()) {
+            if (g.type != type || !g.isSupported) continue
+            for (i in 0 until g.length) {
+                val fallback = (if (type == C.TRACK_TYPE_TEXT) "字幕 " else "音轨 ") + (out.size + 1)
+                out += TrackOption(trackName(g.getTrackFormat(i), fallback), g, i)
+            }
+        }
+        return out
+    }
+
+    private fun trackName(format: Format, fallback: String): String {
+        format.label?.takeIf { it.isNotBlank() }?.let { return it }
+        val language = format.language?.takeIf { it.isNotBlank() && it != "und" } ?: return fallback
+        return Locale.forLanguageTag(language).getDisplayName(Locale.SIMPLIFIED_CHINESE).ifBlank { fallback }
+    }
+
+    /** The index in [options] of the track in use, -1 when none is (subtitles turned off). */
+    private fun selectedTrack(type: Int, options: List<TrackOption>): Int {
+        val p = player ?: return -1
+        if (type == C.TRACK_TYPE_TEXT && type in p.trackSelectionParameters.disabledTrackTypes) return -1
+        return options.indexOfFirst { it.group.isTrackSelected(it.index) }
+    }
+
+    private fun trackValue(type: Int, options: List<TrackOption>, none: String): String =
+        selectedTrack(type, options).let { if (it >= 0) options[it].label else none }
+
+    /** Shows the tracks as a list; for subtitles the first row turns them off. */
+    private fun chooseTrack(type: Int, title: String, changed: () -> Unit) {
+        val options = trackOptions(type)
+        val current = selectedTrack(type, options)
+        val subtitles = type == C.TRACK_TYPE_TEXT
+        val labels = (if (subtitles) listOf("关闭") else emptyList()) + options.map { it.label }
+        val checked = if (subtitles) current + 1 else current.coerceAtLeast(0)
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle(title)
+            .setSingleChoiceItems(labels.toTypedArray(), checked) { picked, which ->
+                applyTrack(type, options.getOrNull(if (subtitles) which - 1 else which))
+                picked.dismiss()
+                changed()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+        RemoteControl.cover(dialog)
+    }
+
+    /** [option] null means subtitles off. Audio always has a track picked. */
+    private fun applyTrack(type: Int, option: TrackOption?) {
+        val p = player ?: return
+        p.trackSelectionParameters = p.trackSelectionParameters.buildUpon().apply {
+            when {
+                option != null -> setTrackTypeDisabled(type, false).setOverrideForType(TrackSelectionOverride(option.group.mediaTrackGroup, option.index))
+                type == C.TRACK_TYPE_TEXT -> setTrackTypeDisabled(type, true)
+                else -> return
+            }
+        }.build()
+    }
+
+    /** The past programmes of this channel that can be replayed, and "回到直播" to leave the replay. */
+    private fun showReplay() {
+        val c = catchup ?: return
+        lifecycleScope.launch {
+            val shows = Epg.aired(title, c.days.coerceIn(1, CatchupUrl.MAX_DAYS)).take(MAX_SHOWS)
+            if (shows.isEmpty()) {
+                toast("节目单里没有可以回看的节目")
+                return@launch
+            }
+            val labels = listOf("回到直播") + shows.map { "${Epg.stamp(it.startMs)}  ${it.title}" }
+            val dialog = MaterialAlertDialogBuilder(this@PlayActivity)
+                .setTitle("节目回看")
+                .setItems(labels.toTypedArray()) { _, which -> if (which == 0) backToLive() else playReplay(shows[which - 1]) }
+                .setNegativeButton("取消", null)
+                .show()
+            RemoteControl.cover(dialog)
+        }
+    }
+
+    /** Plays one past programme from its start to its end, in place of the live picture of the channel. */
+    private fun playReplay(show: Epg.Slot) {
+        val c = catchup ?: return
+        val url = CatchupUrl.build(c.template, show.startMs, show.endMs)
+        replayMode = true
+        gen++
+        handler.removeCallbacks(stall)
+        handler.removeCallbacks(rescue)
+        probeJobs.forEach { it.cancel() }
+        probeJobs = emptyList()
+        playJob?.cancel()
+        started = false
+        pendingStart = 0
+        resolution = ""
+        current = Cand(url, "回看 ${Epg.clock(show.startMs)} ${show.title}")
+        resolvedUrl = url
+        setInfo("正在连接回看：${show.title}")
+        player?.apply {
+            setMediaItem(mediaFor(url))
+            prepare()
+        }
+    }
+
+    /** Leaves a replayed programme for the live picture of the same channel. */
+    private fun backToLive() {
+        if (!replayMode) return
+        applyRememberedLine()
+        needWarm = true
+        refreshLists()
+        playCurrent(0)
+    }
+
     // ---- DLNA casting --------------------------------------------------------------------------------------------
 
     private fun showCast() {
@@ -1439,7 +1759,7 @@ class PlayActivity : BaseActivity() {
                 KeyEvent.KEYCODE_MEDIA_PLAY -> { p?.play(); return true }
                 KeyEvent.KEYCODE_MEDIA_PAUSE -> { p?.pause(); return true }
                 KeyEvent.KEYCODE_MEDIA_FAST_FORWARD, KeyEvent.KEYCODE_MEDIA_REWIND -> {
-                    if (!isLive && p != null && p.duration > 0) {
+                    if (canSeek() && p != null && p.duration > 0) {
                         val delta = if (event.keyCode == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD) 30_000L else -30_000L
                         val target = (p.currentPosition + delta).coerceIn(0L, p.duration)
                         p.seekTo(target)
@@ -1483,7 +1803,7 @@ class PlayActivity : BaseActivity() {
             }
             when (event.keyCode) {
                 KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                    if (!isLive) {
+                    if (canSeek()) {
                         player?.takeIf { it.duration > 0 }?.let { p ->
                             val delta = if (event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) 10_000L else -10_000L
                             val target = (p.currentPosition + delta).coerceIn(0L, maxOf(0L, p.duration))
@@ -1550,7 +1870,7 @@ class PlayActivity : BaseActivity() {
                 }
 
                 override fun onLongPress(e: MotionEvent) {
-                    if (isLive) return
+                    if (isLive && !replayMode) return
                     speedBoost = true
                     player?.setPlaybackSpeed(2f)
                     label.text = "2× 倍速"
@@ -1562,7 +1882,7 @@ class PlayActivity : BaseActivity() {
                     val p = player ?: return false
                     if (mode == 0) {
                         if (abs(e2.x - e1.x) > abs(e2.y - e1.y)) {
-                            if (isLive || p.duration <= 0) return false
+                            if (!canSeek() || p.duration <= 0) return false
                             mode = 1
                             startPos = p.currentPosition
                         } else if (e1.x < view.width / 2) {

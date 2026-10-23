@@ -213,6 +213,16 @@ object Store {
 
     fun setLeaveAction(action: String) = prefs.edit().putString("leave_action", action).apply()
 
+    /** How the picture fills the frame: "fit" (letterbox, default), "zoom" (crop to fill) or "fill" (stretch). */
+    fun resizeMode(): String = prefs.getString("resize_mode", "fit") ?: "fit"
+
+    fun setResizeMode(mode: String) = prefs.edit().putString("resize_mode", mode).apply()
+
+    /** The newest episode count of a favorite the user has already been told about (see [Episodes]). */
+    fun notifiedLatest(key: String): Int = prefs.getInt("notified_$key", 0)
+
+    fun setNotifiedLatest(key: String, latest: Int) = prefs.edit().putInt("notified_$key", latest).apply()
+
     /** The line the user picked by hand for a live channel, remembered by address. */
     fun liveLine(channel: String): String? = prefs.getString("liveline_$channel", null)
 

@@ -79,6 +79,7 @@ class MineFragment : Fragment(R.layout.fragment_mine) {
             .setNegativeButton("取消", null)
             .setPositiveButton("移除") { _, _ ->
                 Library.remove(showFavorites, group.key)
+                if (!showFavorites) WatchNext.remove(requireContext(), group.key)
                 refresh()
             }
             .show()

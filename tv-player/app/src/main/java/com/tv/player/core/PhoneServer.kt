@@ -14,11 +14,15 @@ import java.util.concurrent.Executors
 
 /**
  * A tiny web page on the local network so a phone can type for the TV: a search word, a VOD source address or a
- * live list address. Only runs while its dialog is open, and every request must carry the random token from the QR code.
+ * live list address, or press the remote's buttons. Only runs while its dialog is open, and every request must carry
+ * the random token from the QR code.
  */
 class PhoneServer(private val listener: Listener) {
     interface Listener {
         fun onSearch(keyword: String)
+
+        /** Presses a remote button (see the names on the remote page). Returns the message shown on the phone. */
+        fun onKey(name: String): String
 
         /** Returns the message shown on the phone. */
         suspend fun onVod(name: String, api: String): String
@@ -86,10 +90,16 @@ class PhoneServer(private val listener: Listener) {
             return
         }
         val action = path.removePrefix("/$token").trim('/')
-        if (method == "GET" || action.isEmpty()) {
-            respond(out, 200, form())
-            return
+        when {
+            action == "remote" -> respond(out, 200, remotePage())
+            // The remote page calls these in the background; the answer is a single line of text.
+            action.startsWith("key/") -> respond(out, 200, esc(listener.onKey(action.removePrefix("key/"))))
+            method == "GET" || action.isEmpty() -> respond(out, 200, form())
+            else -> handleForm(out, action, body)
         }
+    }
+
+    private fun handleForm(out: java.io.OutputStream, action: String, body: String) {
         val f = body.split('&').associate {
             val kv = it.split('=', limit = 2)
             URLDecoder.decode(kv[0], "UTF-8") to URLDecoder.decode(kv.getOrElse(1) { "" }, "UTF-8").trim()
@@ -142,9 +152,37 @@ h1{font-size:20px}.card{background:#161923;border-radius:14px;padding:14px;margi
 input{width:100%;box-sizing:border-box;padding:12px;margin:5px 0;border-radius:10px;border:1px solid #363C50;background:#0E1015;color:#E8EAF0;font-size:16px}
 button{width:100%;padding:12px;margin-top:6px;border:0;border-radius:10px;background:#6EA8FF;color:#00224D;font-size:16px;font-weight:600}a{color:#6EA8FF}p{line-height:1.6}small{color:#A4ABBD}</style></head><body><h1>$title</h1>$body</body></html>"""
 
+    private fun remotePage() = page(
+        "遥控电视",
+        """<style>.pad{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.row{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px}
+.k{margin:0;background:#1F2330;color:#E8EAF0}.ok{background:#6EA8FF;color:#00224D}.k:active{background:#363C50}</style>
+<div class="card"><h2>方向与确定</h2><div class="pad">
+<span></span><button class="k" data-k="up">▲</button><span></span>
+<button class="k" data-k="left">◀</button><button class="k ok" data-k="ok">确定</button><button class="k" data-k="right">▶</button>
+<span></span><button class="k" data-k="down">▼</button><span></span></div></div>
+<div class="card"><h2>播放与其它</h2>
+<div class="row"><button class="k" data-k="back">返回</button><button class="k" data-k="menu">菜单</button><span></span></div>
+<div class="row"><button class="k" data-k="rew">快退</button><button class="k" data-k="play">播放/暂停</button><button class="k" data-k="ff">快进</button></div>
+<div class="row"><button class="k" data-k="ch_down">频道 −</button><button class="k" data-k="ch_up">频道 +</button><span></span></div>
+<div class="row"><button class="k" data-k="vol_down">音量 −</button><button class="k" data-k="vol_up">音量 +</button><span></span></div>
+<small id="msg">按一下，电视上会收到同样的遥控按键。</small></div>
+<p><a href="/$token/">返回输入页</a></p>
+<script>
+document.querySelectorAll('[data-k]').forEach(function (b) {
+  b.onclick = function () {
+    var msg = document.getElementById('msg');
+    fetch('key/' + b.dataset.k).then(function (r) { return r.text(); })
+      .then(function (t) { msg.textContent = t; })
+      .catch(function () { msg.textContent = '没连上电视，请重新扫码'; });
+  };
+});
+</script>""",
+    )
+
     private fun form() = page(
         "给电视发送",
         """<div class="card"><h2>搜索</h2><form method="post" action="search"><input name="q" placeholder="片名，电视上直接开始搜索"><button>在电视上搜索</button></form></div>
+<div class="card"><h2>遥控电视</h2><p>把手机当遥控器用：方向键、确定、返回、播放暂停、换台、音量。</p><a href="remote">打开遥控器</a></div>
 <div class="card"><h2>添加点播源</h2><form method="post" action="vod"><input name="name" placeholder="名称（可不填）"><input name="api" placeholder="接口地址 http(s)://…/api.php/provide/vod"><button>检测并添加</button></form><small>添加前会真实搜索一次，通过才会加入。</small></div>
 <div class="card"><h2>添加直播源</h2><form method="post" action="live"><input name="name" placeholder="名称（可不填）"><input name="url" placeholder="直播列表地址（TXT 或 M3U）"><button>下载并添加</button></form></div>""",
     )
