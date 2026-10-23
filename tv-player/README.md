@@ -1,0 +1,82 @@
+# TV Player
+
+原生 Kotlin 写的影视聚合播放器（手机 / 安卓 TV 盒子），不依赖自建服务端，没有 jar / js / python 爬虫运行时。
+
+## 功能
+
+- **热播榜**：发现页顶部是热播电影 / 剧集 / 综艺 / 动漫（豆瓣榜单，带评分和封面，缓存 3 小时）；点任意一项就在所有源里搜这个片名。采集站自己的点击量全是 0，所以榜单只能取自外部
+- **跨源搜索**：同时查所有 CMS 点播源（Apple CMS JSON），每个源独立超时，结果边返回边显示，同名影片自动合并成一张卡片
+- **自动换源**：同一集在所有已加载的源、所有线路里找候选；播放报错或 20 秒没起播，自动换下一条（跨线路、跨源）
+- **直播**：TVBox txt / M3U 列表，同名频道多条线路，卡住自动切线路
+- **DLNA 投屏**：自己实现 SSDP 发现 + AVTransport 控制，不依赖 Google Play 服务（电视盒子大多没有）
+- **手势**：左右滑动调进度，左半屏上下滑调亮度，右半屏上下滑调音量，双击暂停，长按 2 倍速
+- **本地库**：收藏、观看历史（记住集数和进度，下次续播），用 Android 自带 SQLite
+- **订阅**：内置一份点播源和直播源，打开 App 时每 12 小时自动从订阅目录更新；可手动更新、导入任意 TVBox 配置 / TXT / M3U 地址
+- **自定义源**：设置 → 管理点播源和直播源。添加自己的 CMS 接口（添加前先真实搜索一次检测）或直播列表地址；每个点播源可单独开关、测速、删除；自定义直播列表会和订阅里的同名频道合并线路
+- **应用内更新**：启动时（每 12 小时）和设置里的“检查更新”读订阅目录下的 `app-version.json`，有新版就弹窗，下载后校验 SHA-256 再调用系统安装器；安装时 Android 要求新包和已装的签名一致，所以更新源被篡改也装不上别人的包。电视上第一次需要在系统里允许“安装未知应用”
+- **备份**：订阅、收藏、历史、搜索记录导出成一个 JSON 文件，换设备时导入
+- **TV 版**：同一个 APK。电视上自动换成左侧导航栏 + 大海报网格，遥控器方向键全程可用（焦点放大高亮；播放页左右键快进快退 10 秒，上下键进右侧面板）；盒子不报告自己是电视时，在设置里把“界面模式”手动选成“电视”
+
+## 不支持
+
+- type 0（XML CMS）和 type 3（jar / js / python 爬虫）的站点：需要运行时，这里直接跳过。默认订阅里 153 个站点只有约 14 个是纯 CMS JSON
+- 弹幕、字幕搜索、画中画
+- 投屏只有 DLNA，没有 Chromecast / AirPlay
+
+## 构建
+
+需要 JDK 17+、Gradle 9.x、Android SDK 35。
+
+```bash
+cd tv-player
+gradle assembleDebug     # app/build/outputs/apk/debug/app-debug.apk
+```
+
+`gradle.properties` 里写了本机代理 `127.0.0.1:7890`：Gradle 的 JVM 不会读 shell 的 `http_proxy`，没有这几行时 plugins.gradle.org 会握手失败。没有代理的环境把 `systemProp.*` 那几行删掉。
+
+`local.properties` 的 `sdk.dir` 指向 SDK，不提交。
+
+## 订阅目录
+
+默认地址 `https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tvbox-check/out/`，里面要有：
+
+- `best.json`：TVBox 配置，只取 `type: 1` 且 `api` 是 http(s) 的站点
+- `live.txt`：直播列表
+
+这两个文件由仓库根目录的 `tvbox-check/`（GitHub Actions + 本地测速）生成。`app/src/main/assets/` 里的是内置副本，用 `cp tvbox-check/out/{best.json,live.txt} tv-player/app/src/main/assets/` 刷新。
+
+## 代码结构
+
+```
+app/src/main/java/com/tv/player/
+├── core/   Http、Cms（搜索/详情解析）、Search（并行 + 合并 + 冷却）、Resolve（播放页取流地址）、
+│           Live、Dlna、Library（SQLite）、Store、Backup、Updater
+├── data/   Models
+└── ui/     MainActivity（四个 Tab）、Search/Live/Mine/SettingsFragment、PlayActivity、Adapters
+```
+
+## 验证情况
+
+在 Android 15 模拟器（手机，另用 1920x1080 显示参数模拟电视）上实际跑过：搜索与相关性过滤、合并排序、详情与播放、手势（进度/音量/亮度）、横屏全屏、自动换源（404 线路、卡死线路、好线路的组合）、收藏与续播、直播播放、自定义点播/直播源增删与测速、备份导出再清数据后恢复、订阅自动更新、遥控器方向键导航。
+
+没有验证的：真实电视/盒子硬件；DLNA 在真实电视上的兼容性（只对着本机写的假 DLNA 设备验证了 SSDP 之外的 SOAP 流程，模拟器里收不到组播）；Release（R8 混淆）包。
+
+## 安装
+
+`dist/TV-Player-debug.apk`（debug 签名，手机和电视通用）。
+
+## 发布新版本
+
+```bash
+# 1. 版本号（也可以直接改 app/build.gradle 里的默认值）
+gradle assembleRelease -PappVersionCode=3 -PappVersionName=1.0.2
+
+# 2. 用【固定的】密钥签名。以后每个版本都必须用同一把，否则已装的用户升级会失败
+$ANDROID_HOME/build-tools/<版本>/apksigner sign --ks <你的.keystore> \
+  --out releases/TV-Player-1.0.2.apk app/build/outputs/apk/release/app-release-unsigned.apk
+
+# 3. 生成版本说明（读取 output-metadata.json 里的版本号，计算 sha256 和大小）
+python3 scripts/make-update-manifest.py releases/TV-Player-1.0.2.apk "<APK 的下载地址>" "更新说明" > ../tvbox-check/out/app-version.json
+```
+
+把 APK 和 `app-version.json` 提交到仓库，已安装的 App 就会在下次检查时提示更新。当前 `releases/` 里的包用的是本机 Android debug 密钥，只适合自己用；要给别人用，请换成自己保管的发布密钥。

@@ -1,0 +1,9 @@
+{
+  "versionCode": 2,
+  "versionName": "1.0.1",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.1.apk",
+  "sha256": "5125a54416845cfdcc2a4afb0a1b56b70a3105972b2923976f1164fa8adaa978",
+  "size": 2857336,
+  "notes": "新增：热播电影 / 剧集 / 综艺 / 动漫榜单\n新增：应用内检查更新\n修复：断网换线后从头播放、直播落后实时、离线搜索后所有源被冷却\n优化：搜索区更紧凑",
+  "force": false
+}
