@@ -54,6 +54,7 @@ import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
@@ -86,6 +87,7 @@ import com.tv.player.data.VodItem
 import com.tv.player.data.toJsonString
 import com.tv.player.data.vodItemsFromJson
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -104,6 +106,10 @@ class PlayActivity : BaseActivity() {
         private const val SAVE_MS = 10_000L
         private const val MAX_SKIP = 300
         private const val EP_GROUP = 30
+        private const val RESCUE_MS = 4_000L
+        private const val BACKGROUND_PROBE_MS = 10_000L
+        private const val QUICK_MS = 6 * 3600_000L
+        private val DIRECT = Regex("\\.(m3u8|mp4|flv|mkv)(\\?|$)", RegexOption.IGNORE_CASE)
 
         fun startVod(context: Context, group: VodGroup) = context.startActivity(
             Intent(context, PlayActivity::class.java)
@@ -151,7 +157,41 @@ class PlayActivity : BaseActivity() {
     private val probes = HashMap<String, LineProbe.Result>()
     private var pinned = false // the user picked a line by hand: keep it first
     private var probeJobs: List<Job> = emptyList() // speed tests still running; cancelled when the channel changes
-    private var needWarm = false // test the lines before the first start
+    private var needWarm = false // speed-test the lines if the first one is slow to start
+
+    /**
+     * The first line starts at once; only if it has not started after [RESCUE_MS] are the other lines speed-tested
+     * (in the background) and, when a smooth one is found, played instead. A good first line therefore costs nothing.
+     */
+    /**
+     * Once a title has played smoothly for a while, the other lines are tested quietly in the background, so that if
+     * this one stalls later the failover goes straight to a line known to be good (and share pages are pre-resolved).
+     */
+    private val backgroundProbe = Runnable {
+        if (isLive || !started || !smartOn() || pinned) return@Runnable
+        lifecycleScope.launch { warmUp(background = true) }
+    }
+
+    private var quickFirst: Pair<Cand, String?>? = null // continue watching: the line to start with, already resolved
+
+    private var gen = 0 // bumped by every new start (episode, line, channel); stale background work checks it
+    private val rescue = Runnable {
+        if (started || !smartOn() || pinned) return@Runnable
+        // Already receiving video, just a slow server: speed tests now would only take its bandwidth (the stall
+        // timer still catches a line that stops delivering).
+        if ((player?.totalBufferedDuration ?: 0L) > 0L) return@Runnable
+        val waitingOn = current?.url
+        val g = gen
+        lifecycleScope.launch {
+            warmUp()
+            if (g != gen || started || pinned || current?.url != waitingOn) return@launch
+            val best = (if (isLive) rank(rawCandidates()) else candidatesAt(curEp)).firstOrNull { it.url !in tried }
+            if (best != null && probes[best.url]?.smooth == true) {
+                Log.d("TVP", "slow start on ${current?.label}, switching to ${best.label}")
+                attempt()
+            }
+        }
+    }
 
     // Live channel zapping: the channels of the group the current one was opened from.
     private var liveGroup = ""
@@ -250,7 +290,10 @@ class PlayActivity : BaseActivity() {
         val failFast = object : DefaultLoadErrorHandlingPolicy() {
             override fun getMinimumLoadableRetryCount(dataType: Int) = 1
         }
+        // Start after 1 s of video instead of the default 2.5 s; the rest keeps buffering while it plays.
+        val loadControl = DefaultLoadControl.Builder().setBufferDurationsMs(15_000, 50_000, 1_000, 2_000).build()
         player = ExoPlayer.Builder(this)
+            .setLoadControl(loadControl)
             .setMediaSourceFactory(
                 DefaultMediaSourceFactory(DefaultDataSource.Factory(this, httpFactory)).setLoadErrorHandlingPolicy(failFast),
             )
@@ -462,6 +505,15 @@ class PlayActivity : BaseActivity() {
             updateKeepScreen()
             when (state) {
                 Player.STATE_READY -> {
+                    if (!started) Log.d("TVP", "ready on ${current?.label}")
+                    handler.removeCallbacks(rescue)
+                    // Speed tests still running would only take bandwidth from the line that just started.
+                    probeJobs.forEach { it.cancel() }
+                    probeJobs = emptyList()
+                    rememberLine()
+                    (resolvedUrl ?: current?.url)?.let { Store.clearBadHost(it) }
+                    handler.removeCallbacks(backgroundProbe)
+                    handler.postDelayed(backgroundProbe, BACKGROUND_PROBE_MS)
                     handler.removeCallbacks(stall)
                     val resumed = pendingStart > 0
                     started = true
@@ -503,6 +555,17 @@ class PlayActivity : BaseActivity() {
 
         override fun onPlayerError(error: PlaybackException) {
             Log.d("TVP", "player error ${error.errorCodeName} on ${current?.label}")
+            // The server answered with an error or garbage (not a timeout, not a dropped network): its other lines
+            // are likely dead too for a while. Live lines are not judged by host.
+            val sourceError = error.errorCode in setOf(
+                PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS,
+                PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND,
+                PlaybackException.ERROR_CODE_IO_INVALID_HTTP_CONTENT_TYPE,
+                PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED,
+                PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED,
+            )
+            val online = (getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).activeNetwork != null
+            if (!isLive && !started && sourceError && online) (resolvedUrl ?: current?.url)?.let { Store.markBadHost(it) }
             setInfo("这条线路播放失败，正在换下一条…")
             failOver()
         }
@@ -551,7 +614,10 @@ class PlayActivity : BaseActivity() {
         else -> "${height}P"
     }
 
-    private fun playCurrent(startMs: Long) {
+    private fun playCurrent(startMs: Long, first: Cand? = null, firstStream: String? = null) {
+        quickFirst = first?.let { it to firstStream }
+        gen++
+        handler.removeCallbacks(backgroundProbe)
         introDone = false
         outroDone = false
         allFailed = false
@@ -588,10 +654,13 @@ class PlayActivity : BaseActivity() {
         playJob = lifecycleScope.launch {
             if (needWarm) {
                 needWarm = false
-                warmUp()
+                handler.removeCallbacks(rescue)
+                handler.postDelayed(rescue, RESCUE_MS)
             }
             while (true) {
-                val cand = nextCandidate()
+                val quick = quickFirst
+                quickFirst = null
+                val cand = quick?.first?.also { tried += it.url } ?: nextCandidate()
                 if (cand == null) {
                     player?.stop()
                     allFailed = true
@@ -600,7 +669,7 @@ class PlayActivity : BaseActivity() {
                     return@launch
                 }
                 setInfo("正在连接：${cand.label}")
-                val stream = probes[cand.url]?.takeIf { it.ok }?.stream ?: if (isLive) cand.url else Resolve.stream(cand.url)
+                val stream = quick?.second ?: probes[cand.url]?.takeIf { it.ok }?.stream ?: if (isLive) cand.url else Resolve.stream(cand.url)
                 Log.d("TVP", "candidate ${cand.label} ${cand.url} -> $stream")
                 if (stream == null) continue
                 current = cand
@@ -637,7 +706,7 @@ class PlayActivity : BaseActivity() {
                 return it
             }
             val next = items.indices.firstOrNull { !details.containsKey(it) } ?: return null
-            details[next] = loadDetail(next)
+            detailOf(next)
         }
     }
 
@@ -663,7 +732,11 @@ class PlayActivity : BaseActivity() {
      * Smooth lines first, the sharpest of them leading; if none is smooth, the fastest; lines that failed the test
      * last. Lines with no test result keep their listed order after the tested ones. A hand-picked line stays first.
      */
-    private fun rank(list: List<Cand>): List<Cand> {
+    private fun rank(input: List<Cand>): List<Cand> {
+        // Hosts that failed to start recently go last whatever the mode, so a dead source does not cost seconds on
+        // every title (stable sort: the order is otherwise kept).
+        val list = if (pinned) input.take(1) + input.drop(1).sortedBy { Store.isBadHost(it.url) }
+        else input.sortedBy { Store.isBadHost(it.url) }
         if (!smartOn() || probes.isEmpty()) return list
         val head = if (pinned) list.take(1) else emptyList()
         fun group(c: Cand): Int {
@@ -683,18 +756,19 @@ class PlayActivity : BaseActivity() {
      * Tests the candidate lines in parallel. Waits for all of them, but leaves early once a smooth line is known
      * (after 1.5 s) and never longer than 4 s; slow ones keep going in the background and still feed the ranking.
      */
-    private suspend fun warmUp() {
+    private suspend fun warmUp(background: Boolean = false) {
         if (!smartOn() || pinned) return
-        setInfo("正在测速选线…")
         if (!isLive) {
             // A wider choice: bring in the lines of up to two more sources, in parallel.
             val extra = items.indices.filter { !details.containsKey(it) }.take(2)
             if (extra.isNotEmpty()) {
                 coroutineScope {
-                    extra.map { i -> async { i to withTimeoutOrNull(3_000) { loadDetail(i) } } }.awaitAll()
-                }.forEach { (i, d) -> if (d != null) details[i] = d }
+                    extra.map { i -> async { withTimeoutOrNull(3_000) { detailOf(i) } } }.awaitAll()
+                }
             }
         }
+        // A slow-start rescue that is no longer needed: the line started while the details were loading.
+        if (!background && started) return
         val cap = minOf(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
         val fresh = rawCandidates().filter { it.url !in probes }.take(6)
         if (fresh.size < 2) return
@@ -716,12 +790,58 @@ class PlayActivity : BaseActivity() {
         }
     }
 
+    /**
+     * Continue watching: the stream that played this episode last time (within [QUICK_MS]) starts at once, before
+     * any source has answered; the details, line list and episode names fill in as they arrive. If that stream has
+     * gone stale, the normal failover takes over.
+     */
+    private fun quickResume(saved: Library.Entry): Boolean {
+        val q = Store.vodLast(key) ?: return false
+        if (q.ep != saved.ep || System.currentTimeMillis() - q.time > QUICK_MS) return false
+        val src = items.indexOfFirst { it.sourceKey == q.src }.takeIf { it >= 0 } ?: return false
+        curSrc = src
+        curLine = q.line
+        curEp = q.ep
+        needWarm = true // a stale stream still gets the slow-start rescue
+        playCurrent(saved.posMs, Cand(q.url, "${items[src].sourceName} · ${q.lineName}", src, q.line), q.stream)
+        lifecycleScope.launch {
+            val d = detailOf(src)
+            if (d != null) {
+                // The line list may have changed order since; follow the line by name.
+                d.lines.indexOfFirst { it.name == q.lineName }.takeIf { it >= 0 }?.let { curLine = it }
+                Library.markSeen(key, Tracker.countOf(d))
+            }
+            refreshLists()
+            updateFavorite()
+            if (started) setInfo(playingText())
+            prefetchDetails()
+        }
+        return true
+    }
+
+    /** Loads up to four more sources' details in parallel in the background, ready for a failover. */
+    private fun prefetchDetails() {
+        val todo = items.indices.filter { !details.containsKey(it) }.take(4)
+        if (todo.isEmpty()) return
+        lifecycleScope.launch {
+            todo.map { i -> async { detailOf(i) } }.awaitAll()
+            refreshLists()
+        }
+    }
+
+    /**
+     * The line to start with: one whose addresses are the video itself (…m3u8 / …mp4) before one that is a share page,
+     * which first has to be fetched and searched for the real address (often several seconds).
+     */
+    private fun directLine(d: VodDetail): Int =
+        d.lines.indexOfFirst { l -> l.episodes.firstOrNull()?.url?.let { DIRECT.containsMatchIn(it) } == true }.coerceAtLeast(0)
+
     /** Same episode number in every loaded source: the chosen source first, starting at the chosen line. */
     private fun rawVodCandidates(ep: Int): List<Cand> = buildList {
         val order = listOf(curSrc) + details.keys.filter { it != curSrc }.sorted()
         for (s in order) {
             val lines = details[s]?.lines ?: continue
-            val start = if (s == curSrc) curLine else 0
+            val start = if (s == curSrc) curLine else directLine(details[s]!!)
             for (k in lines.indices) {
                 val li = (start + k) % lines.size
                 lines[li].episodes.getOrNull(ep)?.let { add(Cand(it.url, "${items[s].sourceName} · ${lines[li].name}", s, li)) }
@@ -729,11 +849,24 @@ class PlayActivity : BaseActivity() {
         }
     }
 
+    private val detailJobs = HashMap<Int, Deferred<VodDetail?>>()
+
+    /**
+     * A source's detail, loaded once however many callers ask at the same time (start, failover, prefetch, speed
+     * test); a detail that loaded is never replaced by a later failure. A failed source is recorded as null.
+     */
+    private suspend fun detailOf(index: Int): VodDetail? {
+        details[index]?.let { return it }
+        val d = detailJobs.getOrPut(index) { lifecycleScope.async { loadDetail(index) } }.await()
+        if (details[index] == null) details[index] = d
+        return details[index]
+    }
+
     private suspend fun loadDetail(index: Int): VodDetail? {
         val item = items[index]
         val source = sources[item.sourceKey] ?: return null
         return try {
-            withTimeoutOrNull(12_000) { Cms.detail(source, item.id) }
+            withTimeoutOrNull(12_000) { Cms.detail(source, item.id) }.also { Log.d("TVP", "detail ${item.sourceName}: ${if (it == null) "none" else "ok"}") }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -744,9 +877,11 @@ class PlayActivity : BaseActivity() {
     private suspend fun initVod() {
         setInfo("正在加载线路…")
         val saved = Library.progress(key)
-        for (i in items.indices) {
-            val d = loadDetail(i)
-            details[i] = d
+        if (saved != null && quickResume(saved)) return
+        val last = Store.vodLine(key)
+        val order = items.indices.sortedBy { if (items[it].sourceKey == last?.first) 0 else 1 }
+        for (i in order) {
+            val d = detailOf(i)
             if (d != null) {
                 curSrc = i
                 break
@@ -757,9 +892,14 @@ class PlayActivity : BaseActivity() {
             setInfo("没有可用的播放线路，换个关键词重新搜")
             return
         }
+        curLine = if (last != null && items[curSrc].sourceKey == last.first) {
+            first.lines.indexOfFirst { it.name == last.second }.takeIf { it >= 0 } ?: directLine(first)
+        } else {
+            directLine(first)
+        }
         var start = 0L
         if (saved != null) {
-            curEp = saved.ep.coerceIn(0, maxOf(0, (first.lines.firstOrNull()?.episodes?.size ?: 1) - 1))
+            curEp = saved.ep.coerceIn(0, maxOf(0, (first.lines.getOrNull(curLine)?.episodes?.size ?: 1) - 1))
             start = saved.posMs
         }
         refreshLists()
@@ -767,6 +907,7 @@ class PlayActivity : BaseActivity() {
         Library.markSeen(key, Tracker.countOf(first))
         needWarm = true
         playCurrent(start)
+        prefetchDetails()
     }
 
     private fun epName(): String = details[curSrc]?.lines?.getOrNull(curLine)?.episodes?.getOrNull(curEp)?.name.orEmpty()
@@ -836,7 +977,7 @@ class PlayActivity : BaseActivity() {
     }
 
     private fun saveProgress() {
-        if (isLive || !started || key.isEmpty()) return
+        if (isLive || !started || key.isEmpty() || details[curSrc] == null) return
         val p = player ?: return
         val pos = p.currentPosition
         val nearEnd = p.duration > 0 && pos > p.duration - 15_000
@@ -915,8 +1056,21 @@ class PlayActivity : BaseActivity() {
     /** A line the user once picked by hand for this channel goes first, and skips the speed test. */
     private fun applyRememberedLine() {
         val idx = Store.liveLine(title)?.let { liveUrls.indexOf(it) } ?: -1
-        liveStart = maxOf(idx, 0)
+        // Not picked by hand: start from the line that worked last time (still re-tested if it turns slow).
+        val lastGood = if (idx < 0) Store.liveLastGood(title)?.let { liveUrls.indexOf(it) } ?: -1 else -1
+        liveStart = maxOf(idx, lastGood, 0)
         pinned = idx >= 0
+    }
+
+    /** The line that just started is tried first next time: per channel for live, source + line per title on demand. */
+    private fun rememberLine() {
+        val c = current ?: return
+        if (isLive) Store.setLiveLastGood(title, c.url)
+        else if (key.isNotEmpty() && c.src in items.indices) {
+            val lineName = details[c.src]?.lines?.getOrNull(c.line)?.name ?: c.label.substringAfter(" · ")
+            Store.setVodLine(key, items[c.src].sourceKey, lineName)
+            resolvedUrl?.let { Store.setVodLast(key, Store.VodLast(items[c.src].sourceKey, c.line, lineName, curEp, c.url, it, System.currentTimeMillis())) }
+        }
     }
 
     private fun channelList(): List<LiveChannel> {
@@ -932,6 +1086,8 @@ class PlayActivity : BaseActivity() {
     }
 
     private fun openChannel(channel: LiveChannel, total: Int, number: Int) {
+        handler.removeCallbacks(rescue)
+        gen++
         probeJobs.forEach { it.cancel() } // the old channel's speed tests would only compete for bandwidth
         probeJobs = emptyList()
         title = channel.name

@@ -1,9 +1,9 @@
 {
-  "versionCode": 8,
-  "versionName": "1.0.7",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.7.apk",
-  "sha256": "2120127371627e4a1423493e8bd82828150b87cdff1829f761959dbe5f27dee7",
-  "size": 2977495,
-  "notes": "新增：电视点播详情页（模糊海报背景、小窗预览、简介、分段选集），确认键全屏\n新增：追剧更新提醒、跳过片头片尾、倍速记忆、睡眠定时\n新增：后台听声音、小窗播放；搜索结果按年份 / 类型 / 清晰度 / 来源筛选\n新增：直播节目单、遥控器换台和数字选台，记住每个频道的线路\n新增：手机扫码给电视输入；热播推荐增加「最近更新」\n优化：整体界面统一，电视播放全屏 + 底部控制栏，播放时不锁屏",
+  "versionCode": 9,
+  "versionName": "1.0.8",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.8.apk",
+  "sha256": "0b571d16cf8642a551c5acbce06ce29e180f876466c9b2b68af63db04b65e30e",
+  "size": 2981591,
+  "notes": "优化：点播起播更快，打开就播，不再先等测速\n优化：继续观看直接用上次的视频地址开播，优先用直连线路，记住每部片能播的源和线路\n优化：起播慢或播放中才在后台测速，坏服务器自动排后，换源不用再等\n修复：续播集数、手动选线被测速覆盖、片源详情重复请求等问题",
   "force": false
 }

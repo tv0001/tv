@@ -218,6 +218,59 @@ object Store {
 
     fun setLiveLine(channel: String, url: String) = prefs.edit().putString("liveline_$channel", url).apply()
 
+    // ---- hosts whose lines recently failed to start ----------------------------------------------------------------
+
+    private const val BAD_HOST_MS = 6 * 3600_000L
+    private val badHosts: MutableMap<String, Long> by lazy {
+        prefs.getStringSet("bad_hosts", emptySet())!!.mapNotNull { e ->
+            e.substringAfterLast('|').toLongOrNull()?.let { e.substringBeforeLast('|') to it }
+        }.toMap().toMutableMap()
+    }
+
+    private fun hostOf(url: String) = runCatching { URL(url).host.lowercase() }.getOrDefault("")
+
+    private fun saveBadHosts() =
+        prefs.edit().putStringSet("bad_hosts", badHosts.map { "${it.key}|${it.value}" }.toSet()).apply()
+
+    fun isBadHost(url: String): Boolean = badHosts[hostOf(url)]?.let { System.currentTimeMillis() - it < BAD_HOST_MS } == true
+
+    fun markBadHost(url: String) {
+        val h = hostOf(url).ifEmpty { return }
+        badHosts[h] = System.currentTimeMillis()
+        saveBadHosts()
+    }
+
+    fun clearBadHost(url: String) {
+        if (badHosts.remove(hostOf(url)) != null) saveBadHosts()
+    }
+
+    /** The live line that last started fine for a channel; tried first next time, but not pinned. */
+    fun liveLastGood(channel: String): String? = prefs.getString("livegood_$channel", null)
+
+    fun setLiveLastGood(channel: String, url: String) = prefs.edit().putString("livegood_$channel", url).apply()
+
+    /** On demand: the exact stream that last played a title, for an instant "continue watching". */
+    class VodLast(val src: String, val line: Int, val lineName: String, val ep: Int, val url: String, val stream: String, val time: Long)
+
+    fun vodLast(key: String): VodLast? = prefs.getString("vodlast_$key", null)?.let {
+        runCatching {
+            val o = JSONObject(it)
+            VodLast(o.getString("s"), o.getInt("l"), o.getString("n"), o.getInt("e"), o.getString("u"), o.getString("t"), o.getLong("at"))
+        }.getOrNull()
+    }
+
+    fun setVodLast(key: String, v: VodLast) = prefs.edit().putString(
+        "vodlast_$key",
+        JSONObject().put("s", v.src).put("l", v.line).put("n", v.lineName).put("e", v.ep).put("u", v.url).put("t", v.stream).put("at", v.time).toString(),
+    ).apply()
+
+    /** On demand: the source key and line name that last played a title. */
+    fun vodLine(key: String): Pair<String, String>? =
+        prefs.getString("vodline_$key", null)?.split('\n')?.takeIf { it.size == 2 }?.let { it[0] to it[1] }
+
+    fun setVodLine(key: String, sourceKey: String, lineName: String) =
+        prefs.edit().putString("vodline_$key", "$sourceKey\n$lineName").apply()
+
     fun clearLiveLine(channel: String) = prefs.edit().remove("liveline_$channel").apply()
 
     // ---- hot chart cache -----------------------------------------------------------------------------------------
