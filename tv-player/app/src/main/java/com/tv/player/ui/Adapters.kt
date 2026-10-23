@@ -41,7 +41,7 @@ fun Context.isTablet(): Boolean = when (Store.uiMode()) {
 fun Context.useSideNav(): Boolean = isTv() || isTablet()
 
 /** Poster width in dp: bigger on TV (seen from the sofa) and tablets. */
-fun Context.posterDp(): Int = if (isTv()) 170 else if (isTablet()) 140 else 120
+fun Context.posterDp(): Int = if (isTv()) 170 else if (isTablet()) 140 else 108
 
 /** Number of grid columns that keep posters around [posterDp] wide. */
 fun Context.gridSpan(minSpan: Int = 3): Int =
@@ -100,22 +100,24 @@ class VodGroupAdapter(
 class HotAdapter(private val onClick: (Hot.Item) -> Unit) : ListAdapter<Hot.Item, VodGroupAdapter.Holder>(Diff) {
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VodGroupAdapter.Holder {
         val view = LayoutInflater.from(parent.context).inflate(R.layout.item_vod, parent, false)
-        view.layoutParams = RecyclerView.LayoutParams(parent.context.dp(if (parent.context.isTv()) 150 else if (parent.context.isTablet()) 130 else 112), ViewGroup.LayoutParams.WRAP_CONTENT)
+        view.layoutParams = RecyclerView.LayoutParams(parent.context.dp(if (parent.context.isTv()) 150 else if (parent.context.isTablet()) 124 else 104), ViewGroup.LayoutParams.WRAP_CONTENT)
         return VodGroupAdapter.Holder(view)
     }
 
     override fun onBindViewHolder(h: VodGroupAdapter.Holder, position: Int) {
         val item = getItem(position)
         h.poster.load(item.pic.takeIf { it.isNotEmpty() }) {
-            addHeader("Referer", Hot.IMAGE_REFERER)
             addHeader("User-Agent", Http.UA)
+            if ("doubanio.com" in item.pic) addHeader("Referer", Hot.IMAGE_REFERER)
             crossfade(true)
             transformations(RoundedCornersTransformation(h.itemView.context.dp(8).toFloat()))
         }
         h.badge.visibility = View.GONE
-        h.remarks.text = if (item.rating > 0) "★ %.1f".format(java.util.Locale.ROOT, item.rating) else ""
+        h.remarks.text = if (item.rating > 0) "★ %.1f".format(java.util.Locale.ROOT, item.rating) else item.remarks
         h.title.text = item.title
-        h.subtitle.text = item.sub.substringBefore(" / ")
+        val year = item.sub.substringBefore(" / ") // older caches kept the whole "2026 / 中国大陆 / …" line
+        h.subtitle.text = year
+        h.subtitle.visibility = if (year.isEmpty()) View.GONE else View.VISIBLE
         h.itemView.zoomOnFocus()
         h.itemView.setOnClickListener { onClick(item) }
     }

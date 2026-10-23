@@ -17,6 +17,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.progressindicator.LinearProgressIndicator
 import com.tv.player.R
 import com.tv.player.core.Grouper
@@ -60,6 +61,9 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         results.layoutManager = GridLayoutManager(requireContext(), requireContext().gridSpan())
         results.adapter = adapter
 
+        // An empty status line must not take up a row of height.
+        status.doAfterTextChanged { status.visibility = if (it.isNullOrEmpty()) View.GONE else View.VISIBLE }
+
         val clear = view.findViewById<View>(R.id.clear)
         query.doAfterTextChanged { clear.visibility = if (it.isNullOrEmpty()) View.GONE else View.VISIBLE }
         clear.setOnClickListener {
@@ -86,7 +90,10 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
 
     override fun onHiddenChanged(hidden: Boolean) {
         super.onHiddenChanged(hidden)
-        if (!hidden) updateSubtitle()
+        if (!hidden) {
+            updateSubtitle()
+            if (!searching) loadHot()
+        }
     }
 
     override fun onResume() {
@@ -102,7 +109,7 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
     private fun reset() {
         job?.cancel()
         adapter.submitList(emptyList())
-        progress.visibility = View.INVISIBLE
+        progress.visibility = View.GONE
         status.text = ""
         searching = false
         syncIdle()
@@ -163,6 +170,41 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
                         query.setText(kw)
                         search(kw)
                     }
+                    // The small cross deletes one entry; long-press does the same (the way to do it with a remote).
+                    isCloseIconVisible = true
+                    closeIconSize = requireContext().dp(16).toFloat()
+                    setOnCloseIconClickListener {
+                        Store.removeHistory(kw)
+                        showHistory()
+                    }
+                    setOnLongClickListener {
+                        Store.removeHistory(kw)
+                        showHistory()
+                        true
+                    }
+                },
+            )
+        }
+        if (items.isNotEmpty()) {
+            history.addView(
+                Chip(requireContext()).apply {
+                    text = "清空"
+                    textSize = 13f
+                    chipMinHeight = requireContext().dp(30).toFloat()
+                    setEnsureMinTouchTargetSize(false)
+                    setChipIconResource(R.drawable.ic_delete)
+                    isChipIconVisible = true
+                    chipIconSize = requireContext().dp(16).toFloat()
+                    setOnClickListener {
+                        MaterialAlertDialogBuilder(requireContext())
+                            .setTitle("清空全部搜索历史？")
+                            .setNegativeButton("取消", null)
+                            .setPositiveButton("清空") { _, _ ->
+                                Store.clearHistory()
+                                showHistory()
+                            }
+                            .show()
+                    }
                 },
             )
         }
@@ -202,7 +244,7 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
                 adapter.submitList(grouper.snapshot(keyword))
                 status.text = "已返回 $done/${sources.size} 个源 · ${grouper.size} 个结果"
             }
-            progress.visibility = View.INVISIBLE
+            progress.visibility = View.GONE
             status.text = "完成：$ok/${sources.size} 个源可用，共 ${grouper.size} 个结果"
             if (grouper.size == 0) {
                 empty.findViewById<ImageView>(R.id.emptyIcon).setImageResource(R.drawable.ic_search)

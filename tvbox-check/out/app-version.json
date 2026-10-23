@@ -1,9 +1,9 @@
 {
-  "versionCode": 3,
-  "versionName": "1.0.2",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.2.apk",
-  "sha256": "21797acc03630a7d71c0a19ca64e88f6df57af68fc1b98ac3df3bf4041a3d632",
+  "versionCode": 4,
+  "versionName": "1.0.3",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.3.apk",
+  "sha256": "7f5a85c77a67175118086df959047a01c887af50ab265da8e84fb15cc212219a",
   "size": 2861493,
-  "notes": "新增：平板模式（侧边导航 + 左画面右面板），设置里可手动指定界面模式\n新增：补充 17 个验证过能搜索的 CMS 点播站点，同域名自动去重\n优化：热播剧集排在最上面；最近搜索压成一行；热播榜加载失败时不再占半屏\n更新：重新测速的央视 / 卫视直播列表",
+  "notes": "优化：搜索页间距、各页面整体更紧凑，没有内容的状态行不再占位\n新增：最近搜索可以逐条删除（点小叉；遥控器长按确定）和一键清空\n新增：豆瓣榜单取不到时，改用各站点的最近更新补上四行海报，设置里可手动选择\n修复：热播榜无评分条目的海报被一长串文字盖住",
   "force": false
 }

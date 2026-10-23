@@ -20,7 +20,8 @@ object Hot {
         "tv_animation" to "热播动漫",
     )
 
-    class Item(val title: String, val pic: String, val rating: Double, val sub: String)
+    /** [rating] and [sub] (year) come from Douban; [remarks] (e.g. "更新至第06集") from a source. */
+    class Item(val title: String, val pic: String, val rating: Double, val sub: String, val remarks: String = "")
 
     class Section(val title: String, val items: List<Item>)
 
@@ -28,11 +29,16 @@ object Hot {
 
     private fun List<Section>.ordered() = sortedBy { order.indexOf(it.title).let { i -> if (i < 0) order.size else i } }
 
-    fun cached(): List<Section>? =
+    fun cached(): List<Section>? = if (Store.hotMode() == "cms") null else
         Store.hotCache()?.let { runCatching { parse(it.second) }.getOrNull() }?.takeIf { it.isNotEmpty() }?.ordered()
 
     /** Fresh cache is returned without touching the network; otherwise downloads. Null when nothing could be loaded. */
     suspend fun refresh(force: Boolean = false): List<Section>? {
+        if (Store.hotMode() == "cms") return latest(force)
+        return douban(force) ?: latest(force)
+    }
+
+    private suspend fun douban(force: Boolean): List<Section>? {
         val cache = Store.hotCache()
         if (!force && cache != null && System.currentTimeMillis() - cache.first < FRESH_MS) {
             runCatching { parse(cache.second) }.getOrNull()?.takeIf { it.isNotEmpty() }?.let { return it.ordered() }
@@ -41,6 +47,53 @@ object Hot {
         if (sections.isEmpty()) return null
         Store.saveHot(serialize(sections))
         return sections.ordered()
+    }
+
+    // ---- fallback: the sources' own latest updates -----------------------------------------------------------------
+
+    private var latestAt = 0L
+    private var latestCache: List<Section>? = null
+    private val adult = Regex("伦理|福利|情色|成人|写真|里番|三级")
+
+    /**
+     * For networks that cannot reach Douban. Not a popularity ranking, just what the sources updated most recently,
+     * sorted into series / movies / variety / anime by their category names.
+     */
+    private suspend fun latest(force: Boolean): List<Section>? {
+        latestCache?.let { if (!force && System.currentTimeMillis() - latestAt < 20 * 60_000L) return it }
+        val sources = Store.sources().take(6)
+        val rows = coroutineScope { sources.map { s -> async { runCatching { latestOf(s) }.getOrDefault(emptyList()) } }.awaitAll() }.flatten()
+        val sections = listOf("剧集", "电影", "综艺", "动漫").mapNotNull { kind ->
+            val items = rows.filter { it.first == kind }.map { it.second }.distinctBy { Search.normalize(it.title) }.take(20)
+            if (items.isEmpty()) null else Section("最近更新 · $kind", items)
+        }
+        if (sections.isEmpty()) return null
+        latestCache = sections
+        latestAt = System.currentTimeMillis()
+        return sections
+    }
+
+    private suspend fun latestOf(s: com.tv.player.data.VodSource): List<Pair<String, Item>> {
+        val url = s.api + (if ('?' in s.api) "&" else "?") + "ac=videolist&pg=1"
+        val r = Http.get(url, timeoutMs = 9_000)
+        if (r.status != 200) return emptyList()
+        val list = JSONObject(r.text).optJSONArray("list") ?: return emptyList()
+        return (0 until list.length()).mapNotNull { i ->
+            val o = list.optJSONObject(i) ?: return@mapNotNull null
+            val name = o.optString("vod_name").trim()
+            val type = o.optString("type_name")
+            if (name.isEmpty() || adult.containsMatchIn(type)) return@mapNotNull null
+            val kind = when {
+                "综艺" in type -> "综艺"
+                "动漫" in type || "动画" in type -> "动漫"
+                type.endsWith("剧") || "连续剧" in type || "电视剧" in type -> "剧集"
+                type.endsWith("片") || "电影" in type -> "电影"
+                else -> return@mapNotNull null
+            }
+            val pic = o.optString("vod_pic").trim()
+            if (pic.isEmpty()) return@mapNotNull null // a poster row full of grey boxes is worse than a shorter row
+            kind to Item(name, pic, 0.0, "", o.optString("vod_remarks").trim())
+        }
     }
 
     private suspend fun fetchOne(id: String, title: String): Section? {
@@ -57,7 +110,7 @@ object Hot {
                 val name = o.optString("title").trim()
                 if (name.isEmpty()) return@mapNotNull null
                 val pic = o.optJSONObject("pic")?.optString("large")?.ifEmpty { null } ?: o.optString("cover_url")
-                Item(name, pic, o.optJSONObject("rating")?.optDouble("value", 0.0) ?: 0.0, o.optString("card_subtitle"))
+                Item(name, pic, o.optJSONObject("rating")?.optDouble("value", 0.0) ?: 0.0, o.optString("card_subtitle").substringBefore(" / "))
             }
             if (items.isEmpty()) null else Section(title, items)
         } catch (e: Exception) {

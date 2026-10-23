@@ -165,6 +165,11 @@ object Store {
 
     fun markUpdateChecked() = prefs.edit().putLong("update_checked", System.currentTimeMillis()).apply()
 
+    /** "auto": Douban charts, falling back to the sources' latest updates; "cms": always the sources' latest updates. */
+    fun hotMode(): String = prefs.getString("hot_mode", "auto") ?: "auto"
+
+    fun setHotMode(mode: String) = prefs.edit().putString("hot_mode", mode).apply()
+
     // ---- hot chart cache -----------------------------------------------------------------------------------------
 
     fun hotCache(): Pair<Long, String>? = prefs.getString("hot", null)?.let { prefs.getLong("hot_at", 0L) to it }
@@ -178,6 +183,8 @@ object Store {
     fun setHistory(list: List<String>) = prefs.edit().putString("history", list.take(12).joinToString("\n")).apply()
 
     fun addHistory(keyword: String) = setHistory(listOf(keyword) + history().filter { it != keyword })
+
+    fun removeHistory(keyword: String) = setHistory(history().filter { it != keyword })
 
     fun clearHistory() = prefs.edit().remove("history").apply()
 

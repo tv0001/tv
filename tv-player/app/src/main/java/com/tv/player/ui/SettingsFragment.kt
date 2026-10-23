@@ -14,6 +14,7 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputEditText
 import com.tv.player.R
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.widget.doAfterTextChanged
 import com.tv.player.BuildConfig
 import com.tv.player.core.AppUpdate
 import com.tv.player.core.Backup
@@ -42,6 +43,8 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         val status = view.findViewById<TextView>(R.id.status)
         val importUrl = view.findViewById<TextInputEditText>(R.id.importUrl)
         val importStatus = view.findViewById<TextView>(R.id.importStatus)
+        listOf(R.id.status, R.id.importStatus, R.id.updateStatus).forEach { autoHide(view.findViewById(it)) }
+        autoHide(backupStatus)
         val update = view.findViewById<MaterialButton>(R.id.update)
         val importBtn = view.findViewById<MaterialButton>(R.id.importBtn)
 
@@ -65,6 +68,12 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 }
                 if (info != null) UpdateUi.prompt(requireActivity() as AppCompatActivity, info)
             }
+        }
+
+        val hotMode = view.findViewById<ChipGroup>(R.id.hotMode)
+        hotMode.check(if (Store.hotMode() == "cms") R.id.hotCms else R.id.hotAuto)
+        hotMode.setOnCheckedStateChangeListener { _, ids ->
+            Store.setHotMode(if (ids.firstOrNull() == R.id.hotCms) "cms" else "auto")
         }
 
         val modes = view.findViewById<ChipGroup>(R.id.uiMode)
@@ -131,6 +140,12 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 }
                 .show()
         }
+    }
+
+    /** A status line with no text must not leave an empty row inside its card. */
+    private fun autoHide(view: TextView) {
+        view.visibility = if (view.text.isNullOrEmpty()) View.GONE else View.VISIBLE
+        view.doAfterTextChanged { view.visibility = if (it.isNullOrEmpty()) View.GONE else View.VISIBLE }
     }
 
     override fun onHiddenChanged(hidden: Boolean) {
