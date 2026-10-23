@@ -19,6 +19,7 @@ import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.progressindicator.LinearProgressIndicator
+import com.google.android.material.tabs.TabLayout
 import com.tv.player.R
 import com.tv.player.core.Grouper
 import com.tv.player.core.Hot
@@ -38,7 +39,12 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
     private lateinit var empty: View
     private lateinit var results: RecyclerView
     private lateinit var hotBox: View
-    private lateinit var hotList: LinearLayout
+    private lateinit var hotTabs: TabLayout
+    private lateinit var hotGrid: RecyclerView
+    private lateinit var hotRows: View
+    private lateinit var hotRowsList: LinearLayout
+    private lateinit var hotAdapter: HotAdapter
+    private var hotSections: List<Hot.Section> = emptyList()
     private var searching = false
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -51,7 +57,22 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         results = view.findViewById(R.id.results)
 
         hotBox = view.findViewById(R.id.hot)
-        hotList = view.findViewById(R.id.hotList)
+        hotTabs = view.findViewById(R.id.hotTabs)
+        hotGrid = view.findViewById(R.id.hotGrid)
+        hotRows = view.findViewById(R.id.hotRows)
+        hotRowsList = view.findViewById(R.id.hotRowsList)
+        hotAdapter = HotAdapter(::openHot, grid = true)
+        hotGrid.layoutManager = GridLayoutManager(requireContext(), requireContext().gridSpan())
+        hotGrid.adapter = hotAdapter
+        hotTabs.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
+            override fun onTabSelected(tab: TabLayout.Tab) {
+                hotSections.getOrNull(tab.position)?.let {
+                    hotAdapter.submitList(it.items) { hotGrid.scrollToPosition(0) }
+                }
+            }
+            override fun onTabUnselected(tab: TabLayout.Tab) {}
+            override fun onTabReselected(tab: TabLayout.Tab) {}
+        })
         updateSubtitle()
         empty.findViewById<ImageView>(R.id.emptyIcon).setImageResource(R.drawable.ic_search)
         empty.findViewById<TextView>(R.id.emptyTitle).text = "输入片名开始搜索"
@@ -80,7 +101,7 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         }
         view.findViewById<View>(R.id.searchIcon).setOnClickListener { search(query.text.toString()) }
         status.setOnClickListener {
-            if (!searching && hotList.childCount == 0) {
+            if (!searching && hotSections.isEmpty()) {
                 status.text = "正在加载热播榜…"
                 loadHot(force = true)
             }
@@ -92,7 +113,10 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         super.onHiddenChanged(hidden)
         if (!hidden) {
             updateSubtitle()
-            if (!searching) loadHot()
+            if (!searching) {
+                if (hotSections.isNotEmpty()) renderHot(hotSections) // the layout may have been switched in settings
+                loadHot()
+            }
         }
     }
 
@@ -119,33 +143,50 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
 
     /** With no search running: the hot charts if there are any. The big empty-state picture is only for "no results". */
     private fun syncIdle() {
-        hotBox.visibility = if (hotList.childCount > 0) View.VISIBLE else View.GONE
+        hotBox.visibility = if (hotSections.isNotEmpty()) View.VISIBLE else View.GONE
         empty.visibility = View.GONE
     }
 
     private fun loadHot(force: Boolean = false) {
         viewLifecycleOwner.lifecycleScope.launch {
-            if (hotList.childCount == 0) Hot.cached()?.let { renderHot(it) }
+            if (hotSections.isEmpty()) Hot.cached()?.let { renderHot(it) }
             val fresh = Hot.refresh(force)
             if (fresh != null) {
                 renderHot(fresh)
                 if (!searching) status.text = ""
-            } else if (hotList.childCount == 0 && !searching) {
+            } else if (hotSections.isEmpty() && !searching) {
                 status.text = "热播榜没加载出来（可能没连上豆瓣），点这里重试，或直接搜索"
             }
         }
     }
 
     private fun renderHot(sections: List<Hot.Section>) {
-        hotList.removeAllViews()
-        for (section in sections) {
-            val row = layoutInflater.inflate(R.layout.view_hot_section, hotList, false)
-            row.findViewById<TextView>(R.id.sectionTitle).text = section.title
-            val list = row.findViewById<RecyclerView>(R.id.sectionList)
-            list.layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
-            list.adapter = HotAdapter(::openHot).also { it.submitList(section.items) }
-            hotList.addView(row)
+        val rows = Store.hotLayout() == "rows"
+        hotTabs.visibility = if (rows) View.GONE else View.VISIBLE
+        hotGrid.visibility = if (rows) View.GONE else View.VISIBLE
+        hotRows.visibility = if (rows) View.VISIBLE else View.GONE
+        if (rows) {
+            hotSections = sections
+            hotRowsList.removeAllViews()
+            for (section in sections) {
+                val row = layoutInflater.inflate(R.layout.view_hot_section, hotRowsList, false)
+                row.findViewById<TextView>(R.id.sectionTitle).text = section.title
+                val list = row.findViewById<RecyclerView>(R.id.sectionList)
+                list.layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
+                list.adapter = HotAdapter(::openHot).also { it.submitList(section.items) }
+                hotRowsList.addView(row)
+            }
+            if (!searching) syncIdle()
+            return
         }
+        // Keep the tab the user was on (matched by title) when the list refreshes.
+        val keep = hotSections.getOrNull(hotTabs.selectedTabPosition)?.title
+        hotSections = sections
+        hotTabs.removeAllTabs()
+        sections.forEach { hotTabs.addTab(hotTabs.newTab().setText(it.title.removePrefix("热播").removePrefix("最近更新 · ")), false) }
+        val at = sections.indexOfFirst { it.title == keep }.coerceAtLeast(0)
+        hotTabs.getTabAt(at)?.select()
+        hotAdapter.submitList(sections[at].items)
         if (!searching) syncIdle()
     }
 

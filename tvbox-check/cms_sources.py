@@ -117,6 +117,14 @@ def main():
             seen.add(host)
             unique.append(site)
     good = unique
+    # Several brands are mirrored on two or three hosts with identical content; searching them all only costs time.
+    seen, unique = set(), []
+    for site in good:
+        brand = re.sub(r"[\s\d资源影视点播]+", "", site["name"]) or site["name"]
+        if brand not in seen:
+            seen.add(brand)
+            unique.append(site)
+    good = unique
     for s in good:
         print(f"OK   {s['ms']:5d}ms  {s['count']:3d}  {s['name']:<14} {s['api'][:60]}  (from {s['from']})")
     print(f"\n{len(good)} distinct sites answered a real search ({len(found)} candidates)")

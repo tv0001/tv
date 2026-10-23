@@ -28,6 +28,13 @@ LIST_TIMEOUT = 15
 STREAM_TIMEOUT = 6
 MAX_TESTED_PER_CHANNEL = 10  # about one try per source list
 KEEP_PER_CHANNEL = 3
+# Hosts whose streams were seen carrying inserted commercials (400-number health-product spots) across many
+# channels, while other hosts showed the clean programme at the same moment. Used only when nothing else exists.
+AD_HOSTS = ("38.75.136.137",)
+# Streams that passed the speed test but showed the wrong picture when a frame was grabbed (another channel,
+# a test card, a local station, audio only). Found by eye in a frame-by-frame check; add to it when you spot more.
+BAD_STREAMS = ("event.pull.hebtv.com", "p2.bdstatic.com", "live.zohi.tv", "l.cztvcloud.com",
+               "piccpndks.v.kcdnvip.com/audio", "218.84.12.186:8001")
 MIN_SPEEDUP = 1.5        # segment must download 1.5x faster than it plays
 MIN_PROGRESSIVE_KBPS = 1500  # for non-HLS streams we can only measure throughput
 TEST_WORKERS = 6         # low on purpose: parallel downloads share the line and skew speed
@@ -244,7 +251,12 @@ def main():
             if key not in good:
                 report["missing"].append(key)
                 continue
-            best = sorted(good[key], reverse=True)[:KEEP_PER_CHANNEL]
+            ranked = [x for x in sorted(good[key], reverse=True) if not any(b in x[1] for b in BAD_STREAMS)]
+            if not ranked:
+                report["missing"].append(key)
+                continue
+            clean = [x for x in ranked if not any(h in x[1] for h in AD_HOSTS)]
+            best = (clean or ranked[:1])[:KEEP_PER_CHANNEL]
             report["channels"][key] = [{"url": u, "speedup": s} for s, u in best]
             lines.extend(f"{key},{u}" for _, u in best)
 

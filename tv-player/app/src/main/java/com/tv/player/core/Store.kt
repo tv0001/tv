@@ -183,6 +183,11 @@ object Store {
 
     fun setHotMode(mode: String) = prefs.edit().putString("hot_mode", mode).apply()
 
+    /** "tabs": one chart per top tab as a grid; "rows": all charts stacked, each scrolling sideways. */
+    fun hotLayout(): String = prefs.getString("hot_layout", "tabs") ?: "tabs"
+
+    fun setHotLayout(mode: String) = prefs.edit().putString("hot_layout", mode).apply()
+
     // ---- hot chart cache -----------------------------------------------------------------------------------------
 
     fun hotCache(): Pair<Long, String>? = prefs.getString("hot", null)?.let { prefs.getLong("hot_at", 0L) to it }

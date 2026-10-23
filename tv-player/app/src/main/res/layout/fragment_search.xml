@@ -115,22 +115,61 @@
             android:paddingEnd="8dp"
             android:paddingBottom="8dp" />
 
-        <androidx.core.widget.NestedScrollView
+        <LinearLayout
             android:id="@+id/hot"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:focusable="false"
-            android:overScrollMode="never"
+            android:orientation="vertical"
             android:visibility="gone">
 
-            <LinearLayout
-                android:id="@+id/hotList"
+            <com.google.android.material.tabs.TabLayout
+                android:id="@+id/hotTabs"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:paddingBottom="16dp" />
+                android:layout_height="40dp"
+                android:background="@null"
+                app:tabGravity="start"
+                app:tabIndicatorColor="@color/accent"
+                app:tabIndicatorFullWidth="false"
+                app:tabInlineLabel="true"
+                app:tabMode="scrollable"
+                app:tabPaddingEnd="14dp"
+                app:tabPaddingStart="14dp"
+                app:tabRippleColor="@null"
+                app:tabSelectedTextColor="@color/accent"
+                app:tabTextColor="@color/on_surface_variant" />
 
-        </androidx.core.widget.NestedScrollView>
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/hotGrid"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:clipToPadding="false"
+                android:descendantFocusability="afterDescendants"
+                android:focusable="false"
+                android:paddingStart="8dp"
+                android:paddingTop="6dp"
+                android:paddingEnd="8dp"
+                android:paddingBottom="8dp" />
+
+            <androidx.core.widget.NestedScrollView
+                android:id="@+id/hotRows"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:focusable="false"
+                android:overScrollMode="never"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:id="@+id/hotRowsList"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingBottom="16dp" />
+
+            </androidx.core.widget.NestedScrollView>
+
+        </LinearLayout>
 
         <include
             android:id="@+id/empty"

@@ -112,6 +112,12 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             )
         }
 
+        val hotLayout = view.findViewById<ChipGroup>(R.id.hotLayout)
+        hotLayout.check(if (Store.hotLayout() == "rows") R.id.hotLayoutRows else R.id.hotLayoutTabs)
+        hotLayout.setOnCheckedStateChangeListener { _, ids ->
+            Store.setHotLayout(if (ids.firstOrNull() == R.id.hotLayoutRows) "rows" else "tabs")
+        }
+
         val hotMode = view.findViewById<ChipGroup>(R.id.hotMode)
         hotMode.check(if (Store.hotMode() == "cms") R.id.hotCms else R.id.hotAuto)
         hotMode.setOnCheckedStateChangeListener { _, ids ->

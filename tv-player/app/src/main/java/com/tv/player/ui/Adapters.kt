@@ -97,10 +97,13 @@ class VodGroupAdapter(
 }
 
 /** Poster cards for the hot charts; reuses the search card layout at a fixed width. */
-class HotAdapter(private val onClick: (Hot.Item) -> Unit) : ListAdapter<Hot.Item, VodGroupAdapter.Holder>(Diff) {
+class HotAdapter(private val onClick: (Hot.Item) -> Unit, private val grid: Boolean = false) : ListAdapter<Hot.Item, VodGroupAdapter.Holder>(Diff) {
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VodGroupAdapter.Holder {
         val view = LayoutInflater.from(parent.context).inflate(R.layout.item_vod, parent, false)
-        view.layoutParams = RecyclerView.LayoutParams(parent.context.dp(if (parent.context.isTv()) 150 else if (parent.context.isTablet()) 124 else 104), ViewGroup.LayoutParams.WRAP_CONTENT)
+        view.layoutParams = RecyclerView.LayoutParams(
+            if (grid) ViewGroup.LayoutParams.MATCH_PARENT else parent.context.dp(if (parent.context.isTv()) 150 else if (parent.context.isTablet()) 124 else 104),
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        )
         return VodGroupAdapter.Holder(view)
     }
 
