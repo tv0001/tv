@@ -351,7 +351,7 @@ class PlayActivity : BaseActivity() {
             } else if (panel?.visibility == View.GONE) {
                 panel?.visibility = View.VISIBLE
                 playerView.setFullscreenButtonState(false)
-            } else if (requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE) {
+            } else if (!isTv && requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE) {
                 requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
             } else {
                 finish()
@@ -427,7 +427,8 @@ class PlayActivity : BaseActivity() {
         playerView.setFullscreenButtonClickListener { full ->
             if (panel != null) {
                 panel?.visibility = if (full) View.GONE else View.VISIBLE
-            } else {
+            } else if (!isTv) {
+                // Phones turn the screen; on TV the picture goes full screen inside the app (setTvFull) and the orientation stays.
                 requestedOrientation =
                     if (full) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
             }
