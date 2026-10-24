@@ -33,6 +33,7 @@ class MineFragment : Fragment(R.layout.fragment_mine) {
             layoutManager = GridLayoutManager(requireContext(), requireContext().gridSpan())
             adapter = this@MineFragment.adapter
         }
+        view.findViewById<View>(R.id.panButton).setOnClickListener { PanActivity.start(requireContext()) }
         view.findViewById<ChipGroup>(R.id.mode).setOnCheckedStateChangeListener { _, ids ->
             showFavorites = ids.firstOrNull() == R.id.chipFav
             refresh()

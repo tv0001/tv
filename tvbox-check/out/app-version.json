@@ -1,9 +1,9 @@
 {
-  "versionCode": 21,
-  "versionName": "1.0.20",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.20.apk",
-  "sha256": "59a4865655b9405990cda5220681b7334d3db98cc4a85858057c5cd627b9bd34",
-  "size": 3138799,
-  "notes": "新增：应用更新支持断点续传（中断后下次接着下）和后台下载（通知栏显示进度，完成后提示安装）",
+  "versionCode": 22,
+  "versionName": "1.0.21",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.21.apk",
+  "sha256": "1712c7efb6eb6691e26c709898511ce6209c1fc6ad8ecbe4deef86c2a3db2230",
+  "size": 3151143,
+  "notes": "新增：夸克网盘。设置里扫码登录（手机夸克 App 扫码），在「我的」页打开网盘按文件夹浏览，点视频直接播放，同一文件夹的视频是选集，线路有原画 / 超清 / 高清 / 普通",
   "force": false
 }

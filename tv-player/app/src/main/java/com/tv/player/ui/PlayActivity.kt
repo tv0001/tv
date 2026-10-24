@@ -85,6 +85,7 @@ import com.tv.player.core.DlnaDevice
 import com.tv.player.core.Http
 import com.tv.player.core.LineProbe
 import com.tv.player.core.Library
+import com.tv.player.core.Quark
 import com.tv.player.core.Resolve
 import com.tv.player.core.Store
 import com.tv.player.core.Subtitles
@@ -128,10 +129,11 @@ class PlayActivity : BaseActivity() {
         private const val LINES_FOLD = 4 // more lines than this get the "全部 N 条" row; fewer fit in the row anyway
         private val DIRECT = Regex("\\.(m3u8|mp4|flv|mkv)(\\?|$)", RegexOption.IGNORE_CASE)
 
-        fun startVod(context: Context, group: VodGroup) = context.startActivity(
+        /** [startEp] >= 0 opens that episode (a file picked in the drive browser) instead of the one last watched. */
+        fun startVod(context: Context, group: VodGroup, startEp: Int = -1) = context.startActivity(
             Intent(context, PlayActivity::class.java)
                 .putExtra("key", group.key).putExtra("title", group.title).putExtra("pic", group.pic)
-                .putExtra("items", group.items.toJsonString()),
+                .putExtra("items", group.items.toJsonString()).putExtra("ep", startEp),
         )
 
         fun startLive(context: Context, channel: LiveChannel) = context.startActivity(
@@ -159,6 +161,7 @@ class PlayActivity : BaseActivity() {
     private var curLine = 0
     private var lineRefs: List<Pair<Int, Int>> = emptyList() // the line list's rows: (source index, line index)
     private var curEp = 0
+    private var startEp = -1
     private var liveStart = 0
 
     private val tried = HashSet<String>()
@@ -302,6 +305,7 @@ class PlayActivity : BaseActivity() {
         super.onCreate(savedInstanceState)
         isLive = intent.getBooleanExtra("live", false)
         title = intent.getStringExtra("title").orEmpty()
+        startEp = intent.getIntExtra("ep", -1)
         if (isLive) {
             liveUrls = intent.getStringArrayListExtra("urls") ?: emptyList()
             liveGroup = intent.getStringExtra("group").orEmpty()
@@ -913,6 +917,8 @@ class PlayActivity : BaseActivity() {
 
     private suspend fun loadDetail(index: Int): VodDetail? {
         val item = items[index]
+        // A drive folder: its video files are the episodes.
+        if (item.sourceKey == Quark.SOURCE_KEY) return runCatching { withTimeoutOrNull(15_000) { Quark.detail(item.id, item.title) } }.getOrNull()
         val source = sources[item.sourceKey] ?: return null
         return try {
             withTimeoutOrNull(12_000) { Cms.detail(source, item.id) }.also { Log.d("TVP", "detail ${item.sourceName}: ${if (it == null) "none" else "ok"}") }
@@ -926,7 +932,7 @@ class PlayActivity : BaseActivity() {
     private suspend fun initVod() {
         setInfo("正在加载线路…")
         val saved = Library.progress(key)
-        if (saved != null && quickResume(saved)) return
+        if (saved != null && (startEp < 0 || saved.ep == startEp) && quickResume(saved)) return
         val last = Store.vodLine(key)
         val order = items.indices.sortedBy { if (items[it].sourceKey == last?.first) 0 else 1 }
         for (i in order) {
@@ -947,8 +953,13 @@ class PlayActivity : BaseActivity() {
             directLine(first)
         }
         var start = 0L
-        if (saved != null) {
-            curEp = saved.ep.coerceIn(0, maxOf(0, (first.lines.getOrNull(curLine)?.episodes?.size ?: 1) - 1))
+        val lastEp = maxOf(0, (first.lines.getOrNull(curLine)?.episodes?.size ?: 1) - 1)
+        if (startEp >= 0) {
+            // Opened on a particular file: that one, picked up where it was left only if it is the one last watched.
+            curEp = startEp.coerceIn(0, lastEp)
+            if (saved != null && saved.ep == curEp) start = saved.posMs
+        } else if (saved != null) {
+            curEp = saved.ep.coerceIn(0, lastEp)
             start = saved.posMs
         }
         refreshLists()
@@ -1209,7 +1220,8 @@ class PlayActivity : BaseActivity() {
         else if (key.isNotEmpty() && c.src in items.indices) {
             val lineName = details[c.src]?.lines?.getOrNull(c.line)?.name ?: c.label.substringAfter(" · ")
             Store.setVodLine(key, items[c.src].sourceKey, lineName)
-            resolvedUrl?.let { Store.setVodLast(key, Store.VodLast(items[c.src].sourceKey, c.line, lineName, curEp, c.url, it, System.currentTimeMillis())) }
+            // A drive address expires within hours: replaying it next time would only fail first.
+            if (!Quark.isLink(c.url)) resolvedUrl?.let { Store.setVodLast(key, Store.VodLast(items[c.src].sourceKey, c.line, lineName, curEp, c.url, it, System.currentTimeMillis())) }
         }
     }
 

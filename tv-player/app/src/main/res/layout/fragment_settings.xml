@@ -596,6 +596,50 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:text="夸克网盘"
+                    android:textAppearance="@style/TextAppearance.TvPlayer.Section" />
+
+                <TextView
+                    android:id="@+id/panStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:textAppearance="@style/TextAppearance.TvPlayer.Body" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/panLogin"
+                    style="@style/Widget.TvPlayer.TonalButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="扫码登录" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/panOpen"
+                    style="@style/Widget.TvPlayer.TonalButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="打开我的网盘" />
+
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <com.google.android.material.card.MaterialCardView
+            style="@style/Widget.TvPlayer.Card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
                     android:text="应用更新"
                     android:textAppearance="@style/TextAppearance.TvPlayer.Section" />
 

@@ -14,32 +14,52 @@
         android:text="@string/nav_mine"
         android:textAppearance="@style/TextAppearance.TvPlayer.Headline" />
 
-    <com.google.android.material.chip.ChipGroup
-        android:id="@+id/mode"
-        android:layout_width="wrap_content"
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="10dp"
-        app:selectionRequired="true"
-        app:singleSelection="true">
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
 
-        <com.google.android.material.chip.Chip
-            android:id="@+id/chipHistory"
-            style="@style/Widget.TvPlayer.Chip"
+        <com.google.android.material.chip.ChipGroup
+            android:id="@+id/mode"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:checkable="true"
-            android:checked="true"
-            android:text="继续观看" />
+            app:selectionRequired="true"
+            app:singleSelection="true">
 
-        <com.google.android.material.chip.Chip
-            android:id="@+id/chipFav"
-            style="@style/Widget.TvPlayer.Chip"
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipHistory"
+                style="@style/Widget.TvPlayer.Chip"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checkable="true"
+                android:checked="true"
+                android:text="继续观看" />
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipFav"
+                style="@style/Widget.TvPlayer.Chip"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checkable="true"
+                android:text="我的收藏" />
+
+        </com.google.android.material.chip.ChipGroup>
+
+        <Space
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/panButton"
+            style="@style/Widget.TvPlayer.TonalButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:checkable="true"
-            android:text="我的收藏" />
+            android:text="夸克网盘" />
 
-    </com.google.android.material.chip.ChipGroup>
+    </LinearLayout>
 
     <FrameLayout
         android:layout_width="match_parent"

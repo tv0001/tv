@@ -19,6 +19,7 @@ import com.tv.player.BuildConfig
 import com.tv.player.core.AppUpdate
 import com.tv.player.core.Backup
 import com.tv.player.core.Library
+import com.tv.player.core.Quark
 import com.tv.player.core.Store
 import com.tv.player.core.Updater
 import kotlinx.coroutines.Dispatchers
@@ -69,6 +70,24 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 if (info != null) UpdateUi.prompt(requireActivity() as AppCompatActivity, info)
             }
         }
+
+        val panStatus = view.findViewById<TextView>(R.id.panStatus)
+        val panLogin = view.findViewById<MaterialButton>(R.id.panLogin)
+        fun syncPan() {
+            val on = Quark.loggedIn
+            panStatus.text = if (on) "已登录。「我的」页和这里的「打开我的网盘」都能进去" else "还没有登录。登录后可以浏览和播放自己网盘里的视频"
+            panLogin.text = if (on) "退出登录" else "扫码登录"
+        }
+        syncPan()
+        panLogin.setOnClickListener {
+            if (Quark.loggedIn) {
+                Quark.logout()
+                syncPan()
+            } else {
+                PanLogin.show(requireActivity() as AppCompatActivity, onDone = { syncPan() })
+            }
+        }
+        view.findViewById<View>(R.id.panOpen).setOnClickListener { PanActivity.start(requireContext()) }
 
         val dm = resources.displayMetrics
         view.findViewById<TextView>(R.id.screenInfo).text =

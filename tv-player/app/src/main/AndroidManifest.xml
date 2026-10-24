@@ -59,6 +59,11 @@
             android:name=".ui.SourcesActivity"
             android:exported="false" />
 
+        <activity
+            android:name=".ui.PanActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
+            android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.files"

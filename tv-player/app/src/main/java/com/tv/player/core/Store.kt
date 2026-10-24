@@ -183,6 +183,18 @@ object Store {
 
     fun setHotMode(mode: String) = prefs.edit().putString("hot_mode", mode).apply()
 
+    // ---- 夸克网盘 credentials (not part of backups) -------------------------------------------------------------
+
+    fun quarkDeviceId(): String = prefs.getString("quark_device", "") ?: ""
+
+    fun setQuarkDeviceId(id: String) = prefs.edit().putString("quark_device", id).apply()
+
+    fun quarkRefreshToken(): String = prefs.getString("quark_refresh", "") ?: ""
+
+    fun quarkAccessToken(): String = prefs.getString("quark_access", "") ?: ""
+
+    fun setQuarkTokens(refresh: String, access: String) = prefs.edit().putString("quark_refresh", refresh).putString("quark_access", access).apply()
+
     /** "tabs": one chart per top tab as a grid; "rows": all charts stacked, each scrolling sideways. */
     fun hotLayout(): String = prefs.getString("hot_layout", "tabs") ?: "tabs"
 

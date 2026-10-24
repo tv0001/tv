@@ -11,6 +11,8 @@ object Resolve {
      * in the page and resolve it against the page URL. Direct stream URLs are returned as is.
      */
     suspend fun stream(playUrl: String): String? {
+        // A drive file: its address is fetched now, as the drive hands out addresses that expire.
+        if (Quark.isLink(playUrl)) return runCatching { Quark.link(playUrl) }.getOrNull()
         val u = runCatching { URL(playUrl) }.getOrNull() ?: return null
         val pathAndQuery = u.path + (u.query?.let { "?$it" } ?: "")
         if (direct.containsMatchIn(pathAndQuery)) return playUrl
