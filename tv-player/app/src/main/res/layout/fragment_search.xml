@@ -149,6 +149,14 @@
             android:orientation="vertical"
             android:visibility="gone">
 
+            <!-- Phones, tabs layout: one compact row above the tabs (continue watching and updated favorites). -->
+            <LinearLayout
+                android:id="@+id/hotExtra"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone" />
+
             <com.google.android.material.tabs.TabLayout
                 android:id="@+id/hotTabs"
                 android:layout_width="match_parent"

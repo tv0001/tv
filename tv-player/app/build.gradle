@@ -10,8 +10,8 @@ android {
         applicationId = 'com.tv.player'
         minSdk = 26
         targetSdk = 35
-        versionCode = (project.findProperty('appVersionCode') ?: '14').toString().toInteger()
-        versionName = (project.findProperty('appVersionName') ?: '1.0.13').toString()
+        versionCode = (project.findProperty('appVersionCode') ?: '15').toString().toInteger()
+        versionName = (project.findProperty('appVersionName') ?: '1.0.14').toString()
     }
 
     buildFeatures {

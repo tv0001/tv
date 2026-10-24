@@ -111,11 +111,13 @@ class HotAdapter(
     private val grid: Boolean = false,
     /** Called when a card takes the remote's focus; the TV home shows that title in its banner. */
     private val onFocus: ((Hot.Item) -> Unit)? = null,
+    /** A narrower poster than the usual one (dp), for a compact row. */
+    private val widthDp: Int? = null,
 ) : ListAdapter<Hot.Item, VodGroupAdapter.Holder>(Diff) {
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VodGroupAdapter.Holder {
         val view = LayoutInflater.from(parent.context).inflate(R.layout.item_vod, parent, false)
         view.layoutParams = RecyclerView.LayoutParams(
-            if (grid) ViewGroup.LayoutParams.MATCH_PARENT else parent.context.dp(if (parent.context.isTv()) 150 else if (parent.context.isTablet()) 124 else 104),
+            if (grid) ViewGroup.LayoutParams.MATCH_PARENT else parent.context.dp(widthDp ?: if (parent.context.isTv()) 150 else if (parent.context.isTablet()) 124 else 104),
             ViewGroup.LayoutParams.WRAP_CONTENT,
         )
         return VodGroupAdapter.Holder(view)

@@ -45,6 +45,7 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
     private lateinit var status: TextView
     private lateinit var progress: LinearProgressIndicator
     private lateinit var historyBox: View
+    private lateinit var hotExtra: LinearLayout
     private lateinit var history: ChipGroup
     private lateinit var empty: View
     private lateinit var results: RecyclerView
@@ -67,6 +68,7 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         status = view.findViewById(R.id.status)
         progress = view.findViewById(R.id.progress)
         historyBox = view.findViewById(R.id.historyBox)
+        hotExtra = view.findViewById(R.id.hotExtra)
         history = view.findViewById(R.id.history)
         empty = view.findViewById(R.id.empty)
         results = view.findViewById(R.id.results)
@@ -128,6 +130,7 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
                 loadHot(force = true)
             }
         }
+        if (requireContext().isTv()) view.viewTreeObserver.addOnGlobalFocusChangeListener { _, _ -> syncHistory() }
         reset()
     }
 
@@ -145,6 +148,8 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
     override fun onResume() {
         super.onResume()
         updateSubtitle()
+        // Back from the player: what was just watched belongs in the compact row (phones, tabs layout).
+        if (hotSections.isNotEmpty() && !searching && Store.hotLayout() != "rows") fillExtra()
     }
 
     private fun updateSubtitle() {
@@ -195,6 +200,8 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         if (rows) {
             hotSections = sections
             hotRowsList.removeAllViews()
+            hotExtra.removeAllViews()
+            hotExtra.visibility = View.GONE
             val tv = requireContext().isTv()
             if (tv) addHero(sections.firstOrNull()?.items?.firstOrNull(), sections.firstOrNull()?.title?.removePrefix("热播").orEmpty())
             addContinueRow()
@@ -208,6 +215,7 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
             if (!searching) syncIdle()
             return
         }
+        fillExtra()
         // Keep the tab the user was on (matched by title) when the list refreshes.
         val keep = hotSections.getOrNull(hotTabs.selectedTabPosition)?.title
         hotSections = sections
@@ -281,6 +289,29 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         list.layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
         list.adapter = HotAdapter(onClick, onFocus = heroLabel?.let { label -> { item: Hot.Item -> focusHero(item, label) } }).also { it.submitList(items) }
         hotRowsList.addView(row)
+    }
+
+    /** Phones (tabs layout): updated favorites first, then what was being watched, as one row of small posters. */
+    private fun fillExtra() {
+        hotExtra.removeAllViews()
+        hotExtra.visibility = View.GONE
+        val ctx = requireContext()
+        if (ctx.isTv()) return
+        val updated = Library.favorites().filter { it.fresh > 0 }
+        val watching = Library.history(12).filter { h -> updated.none { it.key == h.key } }
+        val groups = updated.map { it.toFavoriteGroup() } + watching.map { it.toGroup(withProgress = true) }
+        if (groups.isEmpty()) return
+        val shown = groups.take(10)
+        val items = shown.map { Hot.Item(it.title, it.pic, 0.0, it.remarks.substringBefore(" · ")) }
+        val row = layoutInflater.inflate(R.layout.view_hot_section, hotExtra, false)
+        row.findViewById<TextView>(R.id.sectionTitle).text = if (updated.isEmpty()) "继续观看" else "继续观看 · 追剧更新"
+        val list = row.findViewById<RecyclerView>(R.id.sectionList)
+        list.layoutManager = LinearLayoutManager(ctx, LinearLayoutManager.HORIZONTAL, false)
+        // The shared row has room for a TV card to grow; a phone row does not need it.
+        list.setPadding(ctx.dp(8), ctx.dp(2), ctx.dp(8), ctx.dp(2))
+        list.adapter = HotAdapter({ picked -> shown.firstOrNull { it.title == picked.title }?.let { PlayActivity.startVod(ctx, it) } }, widthDp = 76).also { it.submitList(items) }
+        hotExtra.addView(row)
+        hotExtra.visibility = View.VISIBLE
     }
 
     /** What the user was watching, first, so a title can be picked up where it was left. */
@@ -360,7 +391,18 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
                 },
             )
         }
-        historyBox.visibility = if (items.isEmpty()) View.GONE else View.VISIBLE
+        syncHistory()
+    }
+
+    /**
+     * TV: the history chips would sit between the search box and the banner all the time; they show only while the
+     * search box or one of them has the focus. Elsewhere they show whenever there is any history.
+     */
+    private fun syncHistory() {
+        if (view == null) return
+        val any = history.childCount > 0
+        val wanted = !requireContext().isTv() || searching || (query.parent as View).findFocus() != null || historyBox.findFocus() != null
+        historyBox.visibility = if (any && wanted) View.VISIBLE else View.GONE
     }
 
     /** Fills the box and searches, for keywords that arrive from the phone. */
