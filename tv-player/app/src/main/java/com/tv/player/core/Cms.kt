@@ -11,16 +11,28 @@ import java.net.URLEncoder
 
 /** Apple CMS JSON API: ?ac=videolist&wd= for search, ?ac=detail&ids= for detail. */
 object Cms {
-    private val adult = Regex("伦理|福利|情色|成人|写真|里番|三级")
+    /** Category names that are kept out of every list; "擦边" marks the suggestive corner of the short-drama category. */
+    val adult = Regex("伦理|福利|情色|成人|写真|里番|三级|擦边")
 
     /** Coarse category from a source's own category name; "" when it cannot be told. */
     fun kindOf(typeName: String): String = when {
+        "短剧" in typeName -> "短剧" // before the "剧" suffix rule, which would file it under series
         "综艺" in typeName -> "综艺"
         "动漫" in typeName || "动画" in typeName -> "动漫"
         typeName.endsWith("剧") || "连续剧" in typeName || "电视剧" in typeName -> "剧集"
         typeName.endsWith("片") || "电影" in typeName -> "电影"
         else -> ""
     }
+
+    // The tag must stand on its own (after a space or in brackets): "Shanghai" ends in "ai" and is not tagged.
+    private val aiMark = Regex("(?:^|[\\s（(])[\\s（(]*(?:AI|Ai|ai)(?:漫剧|动漫)?\\s*[)）]?\\s*$")
+
+    /**
+     * Short-drama titles often carry an "AI" / "Ai漫剧" tag at the end, and some sources glue an alternative title on
+     * with "$" (their own separator): neither is part of the name, and both break searching.
+     */
+    fun cleanTitle(name: String): String =
+        name.substringBefore('$').trim().replace(aiMark, "").replace(Regex("\\s{2,}"), " ").trim().ifEmpty { name.trim() }
 
     private fun url(api: String, query: String) = api + (if ('?' in api) "&" else "?") + query
 

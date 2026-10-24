@@ -1,9 +1,9 @@
 {
-  "versionCode": 17,
-  "versionName": "1.0.16",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.16.apk",
-  "sha256": "d8913858bd2cb8b44a832812235b38f40d2a2b9ca35961d8058c31d0e42e8da9",
+  "versionCode": 18,
+  "versionName": "1.0.17",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.17.apk",
+  "sha256": "5c6524f9804b5ddd30ced4deb1843e749deaf87ea0d16bca14ae2011c5d1f6e0",
   "size": 3126399,
-  "notes": "修复：设置里的「热播推荐样式」（顶部标签 / 分组横滑）在电视上重新生效，默认顶部标签，一屏看到更多\n修复：电视遥控器从导航进首页、从海报行向上回搜索条时，不再落到看不见的空列表上",
+  "notes": "新增：发现页「短剧」榜单，列出各点播源最近更新的短剧，点开直接搜索播放；搜索结果的类型筛选里也有「短剧」\n改进：片名末尾的「AI」「Ai漫剧」标记会去掉；「擦边」分类和成人分类一样被排除",
   "force": false
 }

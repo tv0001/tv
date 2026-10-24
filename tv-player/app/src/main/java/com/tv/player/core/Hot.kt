@@ -3,6 +3,7 @@ package com.tv.player.core
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -14,6 +15,7 @@ object Hot {
     const val IMAGE_REFERER = "https://m.douban.com/"
     private const val FRESH_MS = 3 * 3600_000L
     private const val RECENT = "最近更新"
+    private const val SHORT = "短剧"
     private val charts = listOf(
         "movie_real_time_hotest" to "热播电影",
         "tv_real_time_hotest" to "热播剧集",
@@ -26,7 +28,7 @@ object Hot {
 
     class Section(val title: String, val items: List<Item>)
 
-    private val order = listOf("热播剧集", "热播电影", "热播综艺", "热播动漫", RECENT)
+    private val order = listOf("热播剧集", "热播电影", "热播综艺", "热播动漫", SHORT, RECENT)
 
     private fun List<Section>.ordered() = sortedBy { order.indexOf(it.title).let { i -> if (i < 0) order.size else i } }
 
@@ -36,19 +38,71 @@ object Hot {
     /** Fresh cache is returned without touching the network; otherwise downloads. Null when nothing could be loaded. */
     suspend fun refresh(force: Boolean = false): List<Section>? {
         if (Store.hotMode() == "cms") return latest(force)
-        // The recent-updates tab is fetched alongside the charts so a slow source cannot hold the charts back.
-        val (charts, recent) = coroutineScope {
+        // The short-drama and recent-updates tabs are fetched alongside the charts so a slow source cannot hold the charts back.
+        val (charts, extra) = coroutineScope {
             val c = async { douban(force) }
+            // Two calls per source; bounded as a whole so a few slow sources cannot keep the charts waiting.
+            val s = async { withTimeoutOrNull(12_000) { runCatching { shortDramas(force) }.getOrNull() } }
             val r = async { runCatching { recent(force) }.getOrNull() }
-            c.await() to r.await()
+            c.await() to listOfNotNull(s.await(), r.await())
         }
         if (charts == null) return latest(force)
-        return if (recent == null) charts else (charts + recent).ordered()
+        return (charts + extra).ordered()
+    }
+
+    private var shortAt = 0L
+    private var shortCache: Section? = null
+    /** Category id of "短剧" per source api; -1 when the source has no such category. */
+    private val shortCategory = HashMap<String, Int>()
+
+    /**
+     * Short dramas (短剧) cannot be found by searching: nobody knows their titles. The sources carry them as a category
+     * of their own, so this tab lists what each source put there most recently, interleaved and de-duplicated.
+     */
+    private suspend fun shortDramas(force: Boolean): Section? {
+        shortCache?.let { if (!force && System.currentTimeMillis() - shortAt < 20 * 60_000L) return it }
+        val sources = Store.sources().take(12)
+        val groups = coroutineScope { sources.map { s -> async { runCatching { shortOf(s) }.getOrDefault(emptyList()) } }.awaitAll() }
+        val mixed = ArrayList<Item>()
+        for (i in 0 until (groups.maxOfOrNull { it.size } ?: 0)) groups.forEach { g -> g.getOrNull(i)?.let(mixed::add) }
+        val items = mixed.distinctBy { Search.normalize(it.title) }.take(40)
+        if (items.isEmpty()) return null
+        return Section(SHORT, items).also { shortCache = it; shortAt = System.currentTimeMillis() }
+    }
+
+    private suspend fun shortOf(s: com.tv.player.data.VodSource): List<Item> {
+        val sep = if ('?' in s.api) "&" else "?"
+        val type = shortCategory[s.api] ?: run {
+            val r = Http.get(s.api + sep + "ac=list", timeoutMs = 9_000)
+            // A failed or odd answer is not remembered: the source may just be slow right now.
+            val classes = (if (r.status == 200) runCatching { JSONObject(r.text).optJSONArray("class") }.getOrNull() else null) ?: return emptyList()
+            var found = -1
+            for (i in 0 until classes.length()) {
+                val c = classes.optJSONObject(i) ?: continue
+                val name = c.optString("type_name")
+                // "擦边短剧" and the like are the adult corner of the category; the plain one comes first in every list.
+                if (SHORT in name && !Cms.adult.containsMatchIn(name)) { found = c.optInt("type_id", -1); break }
+            }
+            shortCategory[s.api] = found
+            found
+        }
+        if (type < 0) return emptyList()
+        val r = Http.get(s.api + sep + "ac=videolist&t=$type&pg=1", timeoutMs = 9_000)
+        if (r.status != 200) return emptyList()
+        val list = JSONObject(r.text).optJSONArray("list") ?: return emptyList()
+        return (0 until list.length()).mapNotNull { i ->
+            val o = list.optJSONObject(i) ?: return@mapNotNull null
+            val name = Cms.cleanTitle(o.optString("vod_name"))
+            val pic = o.optString("vod_pic").trim()
+            if (name.isEmpty() || pic.isEmpty() || Cms.adult.containsMatchIn(o.optString("type_name"))) return@mapNotNull null
+            Item(name, pic, 0.0, "", o.optString("vod_remarks").trim())
+        }
     }
 
     /** One mixed tab of what the sources updated most recently, series / movies / variety / anime interleaved. */
     private suspend fun recent(force: Boolean): Section? {
-        val groups = latest(force)?.map { it.items } ?: return null
+        // Short dramas have a tab of their own and would otherwise flood this one (the sources update them all day).
+        val groups = latest(force)?.filter { it.title != "$RECENT · $SHORT" }?.map { it.items } ?: return null
         val mixed = ArrayList<Item>()
         for (i in 0 until (groups.maxOfOrNull { it.size } ?: 0)) groups.forEach { g -> g.getOrNull(i)?.let(mixed::add) }
         val items = mixed.distinctBy { Search.normalize(it.title) }.take(40)
@@ -70,7 +124,7 @@ object Hot {
 
     private var latestAt = 0L
     private var latestCache: List<Section>? = null
-    private val adult = Regex("伦理|福利|情色|成人|写真|里番|三级")
+    private val adult get() = Cms.adult
 
     /**
      * For networks that cannot reach Douban. Not a popularity ranking, just what the sources updated most recently,
@@ -80,7 +134,7 @@ object Hot {
         latestCache?.let { if (!force && System.currentTimeMillis() - latestAt < 20 * 60_000L) return it }
         val sources = Store.sources().take(6)
         val rows = coroutineScope { sources.map { s -> async { runCatching { latestOf(s) }.getOrDefault(emptyList()) } }.awaitAll() }.flatten()
-        val sections = listOf("剧集", "电影", "综艺", "动漫").mapNotNull { kind ->
+        val sections = listOf("剧集", "电影", "综艺", "动漫", SHORT).mapNotNull { kind ->
             val items = rows.filter { it.first == kind }.map { it.second }.distinctBy { Search.normalize(it.title) }.take(20)
             if (items.isEmpty()) null else Section("最近更新 · $kind", items)
         }
@@ -97,7 +151,7 @@ object Hot {
         val list = JSONObject(r.text).optJSONArray("list") ?: return emptyList()
         return (0 until list.length()).mapNotNull { i ->
             val o = list.optJSONObject(i) ?: return@mapNotNull null
-            val name = o.optString("vod_name").trim()
+            val name = Cms.cleanTitle(o.optString("vod_name"))
             val type = o.optString("type_name")
             if (name.isEmpty() || adult.containsMatchIn(type)) return@mapNotNull null
             val kind = Cms.kindOf(type).ifEmpty { return@mapNotNull null }

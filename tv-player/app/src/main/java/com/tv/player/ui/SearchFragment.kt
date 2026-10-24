@@ -21,6 +21,7 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.progressindicator.LinearProgressIndicator
 import com.google.android.material.tabs.TabLayout
 import com.tv.player.R
+import com.tv.player.core.Cms
 import com.tv.player.core.Grouper
 import com.tv.player.core.Hot
 import com.tv.player.core.Library
@@ -290,7 +291,7 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
 
     /** "第二季" style suffixes are dropped so every season shows up in the results. */
     private fun openHot(item: Hot.Item) {
-        val keyword = item.title.replace(Regex("\\s*第[一二三四五六七八九十0-9]+季.*$"), "").ifBlank { item.title }
+        val keyword = Cms.cleanTitle(item.title).replace(Regex("\\s*第[一二三四五六七八九十0-9]+季.*$"), "").ifBlank { item.title }
         query.setText(keyword)
         search(keyword)
     }
