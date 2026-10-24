@@ -3,6 +3,7 @@
     <string name="app_name">TV Player</string>
     <string name="nav_search">发现</string>
     <string name="nav_live">直播</string>
+    <string name="nav_short">短剧</string>
     <string name="nav_mine">我的</string>
     <string name="nav_settings">设置</string>
     <string name="search_hint">搜索电影、剧集、综艺</string>

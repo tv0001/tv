@@ -1,5 +1,7 @@
 package com.tv.player.core
 
+import com.tv.player.data.VodItem
+import com.tv.player.data.VodSource
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -62,7 +64,7 @@ object Hot {
     private suspend fun shortDramas(force: Boolean): Section? {
         shortCache?.let { if (!force && System.currentTimeMillis() - shortAt < 20 * 60_000L) return it }
         val sources = Store.sources().take(12)
-        val groups = coroutineScope { sources.map { s -> async { runCatching { shortOf(s) }.getOrDefault(emptyList()) } }.awaitAll() }
+        val groups = coroutineScope { sources.map { s -> async { runCatching { shortOf(s).map { Item(it.title, it.pic, 0.0, "", it.remarks) } }.getOrDefault(emptyList()) } }.awaitAll() }
         val mixed = ArrayList<Item>()
         for (i in 0 until (groups.maxOfOrNull { it.size } ?: 0)) groups.forEach { g -> g.getOrNull(i)?.let(mixed::add) }
         val items = mixed.distinctBy { Search.normalize(it.title) }.take(40)
@@ -70,7 +72,20 @@ object Hot {
         return Section(SHORT, items).also { shortCache = it; shortAt = System.currentTimeMillis() }
     }
 
-    private suspend fun shortOf(s: com.tv.player.data.VodSource): List<Item> {
+    /**
+     * Short dramas, page by page, for the 短剧 tab: every source's page [n], interleaved so no source dominates. The
+     * items keep their source and id, so a card can be played straight away; the caller merges equal titles.
+     */
+    suspend fun shortPage(n: Int): List<VodItem> {
+        val sources = Store.sources().take(12)
+        val groups = coroutineScope { sources.map { s -> async { runCatching { shortOf(s, n) }.getOrDefault(emptyList()) } }.awaitAll() }
+        val mixed = ArrayList<VodItem>()
+        for (i in 0 until (groups.maxOfOrNull { it.size } ?: 0)) groups.forEach { g -> g.getOrNull(i)?.let(mixed::add) }
+        return mixed
+    }
+
+    /** One page of a source's 短剧 category as search-style items (cleaned titles); empty when it has no such category. */
+    suspend fun shortOf(s: VodSource, page: Int = 1): List<VodItem> {
         val sep = if ('?' in s.api) "&" else "?"
         val type = shortCategory[s.api] ?: run {
             val r = Http.get(s.api + sep + "ac=list", timeoutMs = 9_000)
@@ -87,15 +102,19 @@ object Hot {
             found
         }
         if (type < 0) return emptyList()
-        val r = Http.get(s.api + sep + "ac=videolist&t=$type&pg=1", timeoutMs = 9_000)
+        val r = Http.get(s.api + sep + "ac=videolist&t=$type&pg=$page", timeoutMs = 9_000)
         if (r.status != 200) return emptyList()
         val list = JSONObject(r.text).optJSONArray("list") ?: return emptyList()
         return (0 until list.length()).mapNotNull { i ->
             val o = list.optJSONObject(i) ?: return@mapNotNull null
+            val id = o.optString("vod_id").trim()
             val name = Cms.cleanTitle(o.optString("vod_name"))
             val pic = o.optString("vod_pic").trim()
-            if (name.isEmpty() || pic.isEmpty() || Cms.adult.containsMatchIn(o.optString("type_name"))) return@mapNotNull null
-            Item(name, pic, 0.0, "", o.optString("vod_remarks").trim())
+            if (id.isEmpty() || name.isEmpty() || pic.isEmpty() || Cms.adult.containsMatchIn(o.optString("type_name"))) return@mapNotNull null
+            VodItem(
+                s.key, s.name, id, name, pic, o.optString("vod_remarks").trim(),
+                year = o.optString("vod_year").trim().takeIf { it.length == 4 && it.all(Char::isDigit) }.orEmpty(), kind = SHORT,
+            )
         }
     }
 

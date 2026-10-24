@@ -26,8 +26,8 @@ class MainActivity : BaseActivity() {
             Intent(context, MainActivity::class.java).putExtra(EXTRA_OPEN_KEY, key)
     }
 
-    private val tags = listOf("search", "live", "mine", "settings")
-    private val navIds = listOf(R.id.nav_search, R.id.nav_live, R.id.nav_mine, R.id.nav_settings)
+    private val tags = listOf("search", "live", "short", "mine", "settings")
+    private val navIds = listOf(R.id.nav_search, R.id.nav_live, R.id.nav_short, R.id.nav_mine, R.id.nav_settings)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -38,7 +38,7 @@ class MainActivity : BaseActivity() {
 
         val fm = supportFragmentManager
         if (savedInstanceState == null) {
-            val created = listOf<Fragment>(SearchFragment(), LiveFragment(), MineFragment(), SettingsFragment())
+            val created = listOf<Fragment>(SearchFragment(), LiveFragment(), ShortFragment(), MineFragment(), SettingsFragment())
             fm.beginTransaction().setReorderingAllowed(true).apply {
                 created.forEachIndexed { i, f ->
                     add(R.id.container, f, tags[i])
