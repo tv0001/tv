@@ -58,7 +58,7 @@
 | 遥控器焦点（整行宽度的列表项，如直播频道） | `drawable/bg_focus_row.xml` | 不放大：一行放大一定会被列表左右边界裁掉。用行内圆角描边加淡底色，全部画在行里面 |
 | 侧边导航（电视、平板） | `bg_nav_panel.xml`、`nav_header.xml`、`Widget.TvPlayer.NavRail` | 导航放在自己的圆角面板上（`surface` 底），顶部是应用标记；选中项用浅蓝字加 `accent_container` 指示条，其余灰色 |
 | 切换动画 | `res/animator/fade_*.xml`、`res/anim/page_*.xml`、`Animation.TvPlayer.Page` | 只用透明度和 0.98→1 的轻微缩放，100–180 毫秒，不做位移或模糊动画，弱盒子上也不卡；系统的「动画缩放」关闭时自动失效 |
-| 电视首页 | `view_tv_hero.xml`、`SearchFragment` | 顶部固定一块横幅（不放进滚动区），焦点移到哪部片它就显示哪部：模糊海报做背景，右侧放清晰海报；下面是横向行（继续观看、各榜单）。横幅更新延迟 150 毫秒，避免快速滑动时闪烁 |
+| 电视首页 | `SearchFragment` | 没有横幅：顶部是搜索条，下面是横向行（继续观看、更新的收藏、各榜单、高分推荐），海报用「遥控器焦点（海报、方块卡片）」那一行的样式 |
 | 输入框 | `Widget.Material3.TextInputLayout.OutlinedBox` | |
 | 弹窗 | `MaterialAlertDialogBuilder` | 标题说清楚要做什么，确认按钮写动作本身（"清空""移除"），不用"确定" |
 

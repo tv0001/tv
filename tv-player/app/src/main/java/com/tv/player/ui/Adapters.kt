@@ -53,10 +53,9 @@ fun Context.gridSpan(minSpan: Int = 3): Int =
     maxOf(minSpan, (resources.displayMetrics.widthPixels / resources.displayMetrics.density / posterDp()).toInt())
 
 /** Remote-control focus feedback: the focused card grows a little. */
-fun View.zoomOnFocus(scale: Float = 1.06f, onFocus: (() -> Unit)? = null) {
+fun View.zoomOnFocus(scale: Float = 1.06f) {
     setOnFocusChangeListener { v, focused ->
         v.animate().scaleX(if (focused) scale else 1f).scaleY(if (focused) scale else 1f).setDuration(120).start()
-        if (focused) onFocus?.invoke()
     }
 }
 
@@ -109,15 +108,13 @@ class VodGroupAdapter(
 class HotAdapter(
     private val onClick: (Hot.Item) -> Unit,
     private val grid: Boolean = false,
-    /** Called when a card takes the remote's focus; the TV home shows that title in its banner. */
-    private val onFocus: ((Hot.Item) -> Unit)? = null,
     /** A narrower poster than the usual one (dp), for a compact row. */
     private val widthDp: Int? = null,
 ) : ListAdapter<Hot.Item, VodGroupAdapter.Holder>(Diff) {
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VodGroupAdapter.Holder {
         val view = LayoutInflater.from(parent.context).inflate(R.layout.item_vod, parent, false)
         view.layoutParams = RecyclerView.LayoutParams(
-            if (grid) ViewGroup.LayoutParams.MATCH_PARENT else parent.context.dp(widthDp ?: if (parent.context.isTv()) 150 else if (parent.context.isTablet()) 124 else 104),
+            if (grid) ViewGroup.LayoutParams.MATCH_PARENT else parent.context.dp(widthDp ?: if (parent.context.isTv()) 128 else if (parent.context.isTablet()) 124 else 104),
             ViewGroup.LayoutParams.WRAP_CONTENT,
         )
         return VodGroupAdapter.Holder(view)
@@ -137,8 +134,8 @@ class HotAdapter(
         val year = item.sub.substringBefore(" / ") // older caches kept the whole "2026 / 中国大陆 / …" line
         h.subtitle.text = year
         h.subtitle.visibility = if (year.isEmpty()) View.GONE else View.VISIBLE
-        // On TV the focused card grows more (the banner above follows the focus, so the card needs to stand out).
-        h.itemView.zoomOnFocus(if (h.itemView.context.isTv()) 1.1f else 1.06f) { onFocus?.invoke(item) }
+        // On TV the focused card grows more, so it stands out from the row.
+        h.itemView.zoomOnFocus(if (h.itemView.context.isTv()) 1.1f else 1.06f)
         h.itemView.setOnClickListener { onClick(item) }
     }
 

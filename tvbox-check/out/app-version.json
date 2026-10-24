@@ -1,9 +1,9 @@
 {
-  "versionCode": 15,
-  "versionName": "1.0.14",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.14.apk",
-  "sha256": "f85308bcfcd8a74c2ce56c0a90bbb22553747f17c705a07440c395320d80a9ea",
-  "size": 3130551,
-  "notes": "改进：电视首页收起搜索历史，选中搜索框时才显示，首页内容更靠上\n新增：手机发现页加一行紧凑的「继续观看 / 追剧更新」\n改进：电视首页、导航、直播列表和退出确认（见 1.0.13）",
+  "versionCode": 16,
+  "versionName": "1.0.15",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.15.apk",
+  "sha256": "999d166d2fd039210f1491c9e5a59cfa50be918d1f2cf80e20242c693c6e2679",
+  "size": 3126399,
+  "notes": "改进：电视首页去掉顶部横幅，海报和标题缩小一点，一屏能看到更多内容",
   "force": false
 }
