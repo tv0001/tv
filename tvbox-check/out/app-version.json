@@ -1,9 +1,9 @@
 {
-  "versionCode": 16,
-  "versionName": "1.0.15",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.15.apk",
-  "sha256": "999d166d2fd039210f1491c9e5a59cfa50be918d1f2cf80e20242c693c6e2679",
+  "versionCode": 17,
+  "versionName": "1.0.16",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.16.apk",
+  "sha256": "d8913858bd2cb8b44a832812235b38f40d2a2b9ca35961d8058c31d0e42e8da9",
   "size": 3126399,
-  "notes": "改进：电视首页去掉顶部横幅，海报和标题缩小一点，一屏能看到更多内容",
+  "notes": "修复：设置里的「热播推荐样式」（顶部标签 / 分组横滑）在电视上重新生效，默认顶部标签，一屏看到更多\n修复：电视遥控器从导航进首页、从海报行向上回搜索条时，不再落到看不见的空列表上",
   "force": false
 }

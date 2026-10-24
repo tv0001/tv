@@ -94,6 +94,13 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         adapter = VodGroupAdapter(onClick = { PlayActivity.startVod(requireContext(), it) })
         results.layoutManager = GridLayoutManager(requireContext(), requireContext().gridSpan())
         results.adapter = adapter
+        // RecyclerView makes itself focusable in its constructor, over the layout's focusable="false". The empty
+        // results list sits under the charts and would take the remote's focus (Right from the navigation, Up from
+        // the first row) while showing nothing. Only the cards inside should ever be focused.
+        results.isFocusable = false
+        hotGrid.isFocusable = false
+        // TV: a focused card grows 1.1x past its cell; the grid keeps that much room so the top row is not cut by the tabs.
+        if (requireContext().isTv()) hotGrid.setPadding(requireContext().dp(12), requireContext().dp(16), requireContext().dp(12), requireContext().dp(16))
 
         // An empty status line must not take up a row of height.
         status.doAfterTextChanged { status.visibility = if (it.isNullOrEmpty()) View.GONE else View.VISIBLE }
@@ -162,6 +169,9 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         filterBox.visibility = View.GONE
         syncIdle()
         showHistory()
+        // The layout setting may have changed while the results were up; redraw from what is loaded first, in case
+        // the refresh below cannot reach the network and returns nothing.
+        if (hotSections.isNotEmpty()) renderHot(hotSections)
         loadHot()
     }
 
@@ -185,8 +195,8 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
     }
 
     private fun renderHot(sections: List<Hot.Section>) {
-        // TV home is always the rows: "继续观看", then one horizontal row per chart.
-        val rows = requireContext().isTv() || Store.hotLayout() == "rows"
+        // "tabs": one chart per top tab as a grid; "rows": "继续观看", then one horizontal row per chart. TV included.
+        val rows = Store.hotLayout() == "rows"
         hotTabs.visibility = if (rows) View.GONE else View.VISIBLE
         hotGrid.visibility = if (rows) View.GONE else View.VISIBLE
         hotRows.visibility = if (rows) View.VISIBLE else View.GONE
@@ -224,12 +234,17 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
             if (requireContext().isTv()) textSize = 18f
         }
         val list = row.findViewById<RecyclerView>(R.id.sectionList)
+        list.isFocusable = false // see the results list above: only the cards take the focus
         list.layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
         list.adapter = HotAdapter(onClick).also { it.submitList(items) }
         hotRowsList.addView(row)
     }
 
-    /** Phones (tabs layout): updated favorites first, then what was being watched, as one row of small posters. */
+    /**
+     * Phones and tablets (tabs layout): updated favorites first, then what was being watched, as one row of small posters
+     * above the tabs. Not on TV: there a row of cards is as tall as a grid row, and the grid under it would not have room
+     * for even one full row. The TV home keeps continue-watching in the rows layout and on the "我的" page.
+     */
     private fun fillExtra() {
         hotExtra.removeAllViews()
         hotExtra.visibility = View.GONE
@@ -244,6 +259,7 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         val row = layoutInflater.inflate(R.layout.view_hot_section, hotExtra, false)
         row.findViewById<TextView>(R.id.sectionTitle).text = if (updated.isEmpty()) "继续观看" else "继续观看 · 追剧更新"
         val list = row.findViewById<RecyclerView>(R.id.sectionList)
+        list.isFocusable = false
         list.layoutManager = LinearLayoutManager(ctx, LinearLayoutManager.HORIZONTAL, false)
         // The shared row has room for a TV card to grow; a phone row does not need it.
         list.setPadding(ctx.dp(8), ctx.dp(2), ctx.dp(8), ctx.dp(2))
