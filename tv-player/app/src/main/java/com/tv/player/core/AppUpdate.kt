@@ -7,10 +7,19 @@ import android.net.Uri
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import com.tv.player.BuildConfig
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.Call
+import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import org.json.JSONException
 import org.json.JSONObject
 import java.io.File
@@ -30,16 +39,39 @@ object AppUpdate {
 
     fun manifestUrl() = Store.baseUrl().trim().trimEnd('/') + "/app-version.json"
 
+    /**
+     * The default source, and the same file through other GitHub mirrors and GitHub itself. Mirrors differ in speed and in
+     * how long they keep an old copy, so they are asked at the same time.
+     */
+    private const val GITHUB_PATH = "tv0001/tv/main/tvbox-check/out/app-version.json"
+    private val MIRRORS = mirrorsOf("https://gh-proxy.com/https://raw.githubusercontent.com/$GITHUB_PATH")
+
+    /**
+     * The same GitHub file through each mirror. [url] is a gh-proxy address of the form
+     * `https://gh-proxy.com/https://raw.githubusercontent.com/<repo path>`; other addresses are used as they are.
+     */
+    fun mirrorsOf(url: String): List<String> {
+        val prefix = "https://gh-proxy.com/https://raw.githubusercontent.com/"
+        if (!url.startsWith(prefix)) return listOf(url)
+        val path = url.removePrefix(prefix)
+        return listOf(
+            prefix + path,
+            "https://ghfast.top/https://raw.githubusercontent.com/" + path,
+            "https://cdn.jsdelivr.net/gh/" + path.replaceFirst("/main/", "@main/"),
+            "https://raw.githubusercontent.com/" + path,
+            "https://ghproxy.net/https://raw.githubusercontent.com/" + path,
+        )
+    }
+
+    /** After the first usable answer, the others get this long: a fresher copy from a slower mirror may still win. */
+    private const val GRACE_MS = 3_000L
+    private val fetchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     /** [info] is null when this version is current, was skipped by the user, or the manifest is missing. */
     suspend fun check(respectIgnored: Boolean): Check {
-        val r = Http.get(manifestUrl(), timeoutMs = 15_000)
-        if (r.status == 404) return Check(null, null)
-        if (r.status != 200) return Check(null, r.error ?: "HTTP ${r.status}")
-        val o = try {
-            JSONObject(r.text)
-        } catch (e: JSONException) {
-            return Check(null, "更新信息格式不对")
-        }
+        val urls = if (Store.baseUrl() == Store.DEFAULT_BASE) MIRRORS else listOf(manifestUrl())
+        val (o, error) = newestManifest(urls)
+        if (o == null) return Check(null, error)
         val code = o.optInt("versionCode", 0)
         if (code <= BuildConfig.VERSION_CODE) return Check(null, null)
         val url = o.optString("url")
@@ -52,15 +84,80 @@ object AppUpdate {
         return Check(info, null)
     }
 
+    /**
+     * The manifest with the highest versionCode among the answers. Waits for the first usable answer, then at most
+     * [GRACE_MS] more for the rest; the requests still open then are cancelled. A 404 (no manifest there) is not an error.
+     */
+    private suspend fun newestManifest(urls: List<String>): Pair<JSONObject?, String?> {
+        val answers = Channel<Pair<JSONObject?, String?>>(urls.size)
+        val jobs = urls.map { url -> fetchScope.launch { answers.send(fetchManifest(url)) } }
+        var newest: JSONObject? = null
+        var error: String? = null
+        var answered = 0
+        while (answered < urls.size) {
+            val (o, e) = if (newest == null) answers.receive() else (withTimeoutOrNull(GRACE_MS) { answers.receive() } ?: break)
+            answered++
+            if (o == null) {
+                error = error ?: e
+                continue
+            }
+            if (newest == null || o.optInt("versionCode", 0) > newest.optInt("versionCode", 0)) newest = o
+        }
+        jobs.forEach { it.cancel() }
+        return newest to error
+    }
+
+    /**
+     * The first mirror that answers with a file wins: the others are cancelled, so the download comes from the fastest
+     * one. Fails only when no mirror has the file.
+     */
+    private suspend fun openFirst(urls: List<String>, client: OkHttpClient): Response {
+        val calls = urls.map { client.newCall(Request.Builder().url(it).header("User-Agent", Http.UA).build()) }
+        val answers = Channel<Pair<Call, Response?>>(calls.size)
+        val jobs = calls.map { call -> fetchScope.launch { answers.send(call to runCatching { call.execute() }.getOrNull()) } }
+        var winner: Response? = null
+        var lastCode = 0
+        try {
+            repeat(calls.size) {
+                val (call, r) = answers.receive()
+                if (r == null) return@repeat
+                if (winner == null && r.isSuccessful) {
+                    winner = r
+                    calls.forEach { other -> if (other !== call) other.cancel() }
+                } else {
+                    lastCode = r.code
+                    r.close()
+                }
+            }
+        } catch (e: CancellationException) {
+            // The download was abandoned: stop every request, including a winner nobody will read.
+            calls.forEach { it.cancel() }
+            winner?.close()
+            throw e
+        }
+        jobs.forEach { it.cancel() }
+        return winner ?: error("下载失败（" + (if (lastCode > 0) "HTTP $lastCode" else "所有线路都连不上") + "）")
+    }
+
+    private suspend fun fetchManifest(url: String): Pair<JSONObject?, String?> {
+        val r = Http.get(url, timeoutMs = 15_000)
+        if (r.status == 404) return null to null
+        if (r.status != 200) return null to (r.error ?: "HTTP ${r.status}")
+        return try {
+            JSONObject(r.text) to null
+        } catch (e: JSONException) {
+            null to "更新信息格式不对"
+        }
+    }
+
     /** Downloads into the cache directory and verifies the hash. Throws with a readable message on failure. */
     suspend fun download(context: Context, info: Info, onProgress: (done: Long, total: Long) -> Unit): File =
         withContext(Dispatchers.IO) {
             val dir = File(context.cacheDir, "updates").apply { mkdirs() }
             dir.listFiles()?.forEach { it.delete() }
             val file = File(dir, "app-${info.code}.apk")
-            val request = Request.Builder().url(info.url).header("User-Agent", Http.UA).build()
             val client = Http.client.newBuilder().readTimeout(30, TimeUnit.SECONDS).build()
-            client.newCall(request).execute().use { r ->
+            openFirst(mirrorsOf(info.url), client).use { r ->
                 if (!r.isSuccessful) error("下载失败（HTTP ${r.code}）")
                 val body = r.body ?: error("下载失败：没有内容")
                 val total = body.contentLength().takeIf { it > 0 } ?: info.size
