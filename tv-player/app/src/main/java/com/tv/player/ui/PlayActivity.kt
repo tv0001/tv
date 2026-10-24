@@ -553,9 +553,14 @@ class PlayActivity : BaseActivity() {
                     handler.postDelayed(backgroundProbe, BACKGROUND_PROBE_MS)
                     handler.removeCallbacks(stall)
                     val resumed = pendingStart > 0
+                    val wanted = pendingStart
                     started = true
                     pendingStart = 0
-                    if (isLive) refreshEpg() else skipIntro(resumed)
+                    // Carried over from a line that cuts the series differently (one file for every episode against one
+                    // per episode): a position past this stream's end would only finish it, so start it from the top.
+                    val restart = !isLive && wanted > 0 && player?.let { p -> p.duration > 0 && wanted >= p.duration - 1_000 } == true
+                    if (restart) player?.seekTo(0)
+                    if (isLive) refreshEpg() else skipIntro(resumed && !restart)
                     setInfo(playingText())
                 }
                 Player.STATE_ENDED -> if (replayMode) setInfo("回看已播完，可以换一段，或点「回到直播」") else if (!isLive) {
@@ -713,7 +718,7 @@ class PlayActivity : BaseActivity() {
                 }
                 setInfo("正在连接：${cand.label}")
                 val stream = quick?.second ?: probes[cand.url]?.takeIf { it.ok }?.stream ?: if (isLive) cand.url else Resolve.stream(cand.url)
-                Log.d("TVP", "candidate ${cand.label} ${cand.url} -> $stream")
+                Log.d("TVP", "candidate ${cand.label} ${cand.url} -> $stream, start at ${pendingStart}ms")
                 if (stream == null) continue
                 current = cand
                 resolvedUrl = stream
@@ -966,13 +971,25 @@ class PlayActivity : BaseActivity() {
         } else {
             // The row picked may be a line of another source: that source plays from now on.
             val (s, li) = lineRefs.getOrNull(index) ?: return
-            val d = details[s] ?: return
-            curSrc = s
-            curLine = li
-            curEp = curEp.coerceAtMost(maxOf(0, (d.lines.getOrNull(li)?.episodes?.size ?: 1) - 1))
+            pickVodLine(s, li)
+            return
         }
         refreshLists()
         playCurrent(0)
+    }
+
+    /**
+     * Where playback is now, to carry to another line of the same episode: 0 when nothing has started yet (then the
+     * pending start still applies), or when the episode is about to end anyway.
+     */
+    private fun carryPosition(): Long {
+        if (isLive) return 0
+        val p = player ?: return pendingStart
+        if (!started) return pendingStart
+        saveProgress()
+        val pos = p.currentPosition
+        val duration = p.duration
+        return if (pos > 0 && (duration <= 0 || pos < duration - 5_000)) pos else 0
     }
 
     private fun selectEpisode(index: Int) {
@@ -1018,12 +1035,16 @@ class PlayActivity : BaseActivity() {
     /** Plays one line of one source, from the all-lines panel. */
     private fun pickVodLine(s: Int, li: Int) {
         val d = details[s] ?: return
+        // Taken (and the progress saved) before the source changes, so it belongs to the line that was playing.
+        val at = carryPosition()
+        val epBefore = curEp
         pinned = true
         curSrc = s
         curLine = li
         curEp = curEp.coerceAtMost(maxOf(0, (d.lines.getOrNull(li)?.episodes?.size ?: 1) - 1))
         refreshLists()
-        playCurrent(0)
+        // Another line of the same episode goes on from where this one is; a different episode starts from the top.
+        playCurrent(if (curEp == epBefore) at else 0)
     }
 
     /** The line rows stay one row that scrolls sideways; a last row opens the panel when there are more than a few. */
