@@ -6,6 +6,7 @@ import android.view.View
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.chip.Chip
@@ -31,7 +32,7 @@ class LiveFragment : Fragment(R.layout.fragment_live) {
         empty.findViewById<TextView>(R.id.emptyTitle).text = "没有直播频道"
         empty.findViewById<TextView>(R.id.emptySub).text = "去“设置”里更新订阅，或在“源管理”里添加直播源"
 
-        adapter = ChannelAdapter { PlayActivity.startLive(requireContext(), it) }
+        adapter = ChannelAdapter({ PlayActivity.startLive(requireContext(), it) }, if (requireContext().isTv()) viewLifecycleOwner.lifecycleScope else null)
         view.findViewById<RecyclerView>(R.id.channels).apply {
             layoutManager = LinearLayoutManager(requireContext())
             this.adapter = this@LiveFragment.adapter

@@ -1,8 +1,12 @@
 package com.tv.player.ui
 
 import android.content.Context
+import android.graphics.RenderEffect
+import android.graphics.Shader
+import android.os.Build
 import android.os.Bundle
 import android.view.View
+import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
@@ -23,9 +27,13 @@ import com.google.android.material.tabs.TabLayout
 import com.tv.player.R
 import com.tv.player.core.Grouper
 import com.tv.player.core.Hot
+import com.tv.player.core.Http
+import com.tv.player.core.Library
 import com.tv.player.core.Search
 import com.tv.player.core.ResultFilter
 import com.tv.player.core.Store
+import coil.load
+import coil.transform.RoundedCornersTransformation
 import com.tv.player.data.VodGroup
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -43,7 +51,7 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
     private lateinit var hotBox: View
     private lateinit var hotTabs: TabLayout
     private lateinit var hotGrid: RecyclerView
-    private lateinit var hotRows: View
+    private lateinit var hotRows: RowScrollView
     private lateinit var hotRowsList: LinearLayout
     private lateinit var hotAdapter: HotAdapter
     private var hotSections: List<Hot.Section> = emptyList()
@@ -69,6 +77,7 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         hotTabs = view.findViewById(R.id.hotTabs)
         hotGrid = view.findViewById(R.id.hotGrid)
         hotRows = view.findViewById(R.id.hotRows)
+        if (requireContext().isTv()) hotRows.titleGap = requireContext().dp(20)
         hotRowsList = view.findViewById(R.id.hotRowsList)
         hotAdapter = HotAdapter(::openHot, grid = true)
         hotGrid.layoutManager = GridLayoutManager(requireContext(), requireContext().gridSpan())
@@ -178,21 +187,24 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
     }
 
     private fun renderHot(sections: List<Hot.Section>) {
-        val rows = Store.hotLayout() == "rows"
+        // TV home is always the rows: a banner, "继续观看", then one horizontal row per chart.
+        val rows = requireContext().isTv() || Store.hotLayout() == "rows"
         hotTabs.visibility = if (rows) View.GONE else View.VISIBLE
         hotGrid.visibility = if (rows) View.GONE else View.VISIBLE
         hotRows.visibility = if (rows) View.VISIBLE else View.GONE
         if (rows) {
             hotSections = sections
             hotRowsList.removeAllViews()
+            val tv = requireContext().isTv()
+            if (tv) addHero(sections.firstOrNull()?.items?.firstOrNull(), sections.firstOrNull()?.title?.removePrefix("热播").orEmpty())
+            addContinueRow()
+            addUpdatesRow()
             for (section in sections) {
-                val row = layoutInflater.inflate(R.layout.view_hot_section, hotRowsList, false)
-                row.findViewById<TextView>(R.id.sectionTitle).text = section.title
-                val list = row.findViewById<RecyclerView>(R.id.sectionList)
-                list.layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
-                list.adapter = HotAdapter(::openHot).also { it.submitList(section.items) }
-                hotRowsList.addView(row)
+                addRow(section.title, section.items, ::openHot, if (tv) section.title.removePrefix("热播") else null)
             }
+            // Titles the charts rate highest, across all of them: a row of its own, so it is easy to pick something good.
+            val best = sections.flatMap { it.items }.filter { it.rating > 0 }.distinctBy { it.title }.sortedByDescending { it.rating }.take(12)
+            if (best.size >= 4) addRow("高分推荐", best, ::openHot, if (tv) "高分推荐" else null)
             if (!searching) syncIdle()
             return
         }
@@ -205,6 +217,90 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         hotTabs.getTabAt(at)?.select()
         hotAdapter.submitList(sections[at].items)
         if (!searching) syncIdle()
+    }
+
+    private var hero: View? = null
+    private var heroItem: Hot.Item? = null
+    private var heroTask: Runnable? = null
+
+    /** TV home: the banner above the rows. It starts on the first hot title and then follows the remote's focus. */
+    private fun addHero(first: Hot.Item?, firstLabel: String) {
+        if (first == null) return
+        // Fixed above the rows (not inside the scrolling list), so it stays in view while the focus moves through the rows.
+        val box = hotBox as ViewGroup
+        hero?.let(box::removeView)
+        val view = layoutInflater.inflate(R.layout.view_tv_hero, box, false)
+        hero = view
+        heroItem = null
+        view.findViewById<View>(R.id.heroPlay).setOnClickListener { heroItem?.let(::openHot) }
+        box.addView(view, 0)
+        showHero(first, firstLabel)
+    }
+
+    /** The focus moved to [item]: show it in the banner, after a short pause so a quick scroll does not flicker it. */
+    private fun focusHero(item: Hot.Item, label: String) {
+        val view = hero ?: return
+        heroTask?.let(view::removeCallbacks)
+        heroTask = Runnable { showHero(item, label) }.also { view.postDelayed(it, 150) }
+    }
+
+    private fun showHero(item: Hot.Item, label: String) {
+        val view = hero ?: return
+        if (heroItem?.title == item.title) return
+        heroItem = item
+        view.findViewById<View>(R.id.heroText).apply {
+            alpha = 0f
+            animate().alpha(1f).setDuration(160).start()
+        }
+        view.findViewById<TextView>(R.id.heroTitle).text = item.title
+        view.findViewById<TextView>(R.id.heroMeta).text =
+            listOf(label, if (item.rating > 0) "★ %.1f".format(java.util.Locale.ROOT, item.rating) else "", item.sub.replace(" / ", "  ·  "))
+                .filter { it.isNotEmpty() }.joinToString("  ·  ")
+        val pic = item.pic.takeIf { it.isNotEmpty() }
+        val backdrop = view.findViewById<ImageView>(R.id.heroBackdrop)
+        // The poster, enlarged and blurred, is the backdrop: it has no sharp edges to show how small the source is.
+        if (Build.VERSION.SDK_INT >= 31) backdrop.setRenderEffect(RenderEffect.createBlurEffect(40f, 40f, Shader.TileMode.CLAMP))
+        for ((id, round) in listOf(R.id.heroBackdrop to 0, R.id.heroPoster to 10)) {
+            view.findViewById<ImageView>(id).load(pic) {
+                addHeader("User-Agent", Http.UA)
+                if ("doubanio.com" in item.pic) addHeader("Referer", Hot.IMAGE_REFERER)
+                crossfade(true)
+                if (round > 0) transformations(RoundedCornersTransformation(requireContext().dp(round).toFloat()))
+            }
+        }
+    }
+
+    /** One titled horizontal row of posters. [heroLabel] non-null: on TV the banner follows the focus in this row. */
+    private fun addRow(title: String, items: List<Hot.Item>, onClick: (Hot.Item) -> Unit, heroLabel: String?) {
+        val row = layoutInflater.inflate(R.layout.view_hot_section, hotRowsList, false)
+        row.findViewById<TextView>(R.id.sectionTitle).apply {
+            text = title
+            if (requireContext().isTv()) textSize = 22f
+        }
+        val list = row.findViewById<RecyclerView>(R.id.sectionList)
+        list.layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
+        list.adapter = HotAdapter(onClick, onFocus = heroLabel?.let { label -> { item: Hot.Item -> focusHero(item, label) } }).also { it.submitList(items) }
+        hotRowsList.addView(row)
+    }
+
+    /** What the user was watching, first, so a title can be picked up where it was left. */
+    private fun addContinueRow() {
+        val watching = Library.history(12)
+        if (watching.isEmpty()) return
+        val items = watching.map { Hot.Item(it.title, it.pic, 0.0, if (it.epName.isNotEmpty()) "看到 ${it.epName}" else "") }
+        addRow("继续观看", items, { picked ->
+            watching.firstOrNull { it.title == picked.title }?.let { PlayActivity.startVod(requireContext(), it.toGroup(withProgress = true)) }
+        }, if (requireContext().isTv()) "继续观看" else null)
+    }
+
+    /** Favorites that got new episodes since they were last opened. */
+    private fun addUpdatesRow() {
+        val updated = Library.favorites().filter { it.fresh > 0 }
+        if (updated.isEmpty()) return
+        val items = updated.map { Hot.Item(it.title, it.pic, 0.0, "更新 +${it.fresh} 集") }
+        addRow("追剧更新", items, { picked ->
+            updated.firstOrNull { it.title == picked.title }?.let { PlayActivity.startVod(requireContext(), it.toFavoriteGroup()) }
+        }, if (requireContext().isTv()) "追剧更新" else null)
     }
 
     /** "第二季" style suffixes are dropped so every season shows up in the results. */

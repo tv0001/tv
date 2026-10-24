@@ -32,7 +32,30 @@
         <item name="android:navigationBarColor">@color/surface</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="bottomNavigationStyle">@style/Widget.TvPlayer.Nav</item>
+        <item name="navigationRailStyle">@style/Widget.TvPlayer.NavRail</item>
         <item name="chipStyle">@style/Widget.TvPlayer.Chip</item>
+        <item name="android:windowAnimationStyle">@style/Animation.TvPlayer.Page</item>
+    </style>
+
+    <!-- Opening a page fades and settles in (the page below stays put and is covered); closing fades out. Short and
+         alpha/scale only, so it costs nothing on a weak TV box. The system's animation scale still applies. -->
+    <style name="Animation.TvPlayer.Page" parent="@android:style/Animation.Activity">
+        <item name="android:activityOpenEnterAnimation">@anim/page_enter</item>
+        <item name="android:activityOpenExitAnimation">@anim/page_stay</item>
+        <item name="android:activityCloseEnterAnimation">@anim/page_stay</item>
+        <item name="android:activityCloseExitAnimation">@anim/page_exit</item>
+    </style>
+
+    <style name="Widget.TvPlayer.NavRail" parent="Widget.Material3.NavigationRailView">
+        <item name="backgroundTint">@color/surface</item>
+        <item name="itemActiveIndicatorStyle">@style/Widget.TvPlayer.NavRailIndicator</item>
+        <item name="itemIconTint">@color/nav_item</item>
+        <item name="itemTextColor">@color/nav_item</item>
+        <item name="elevation">0dp</item>
+    </style>
+
+    <style name="Widget.TvPlayer.NavRailIndicator" parent="Widget.Material3.NavigationRailView.ActiveIndicator">
+        <item name="android:color">@color/accent_container</item>
     </style>
 
     <style name="Widget.TvPlayer.Nav" parent="Widget.Material3.BottomNavigationView">

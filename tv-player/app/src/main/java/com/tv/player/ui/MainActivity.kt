@@ -7,6 +7,7 @@ import androidx.activity.addCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.navigation.NavigationBarView
 import com.tv.player.R
 import com.tv.player.core.AppUpdate
@@ -50,7 +51,7 @@ class MainActivity : BaseActivity() {
         nav.setOnItemSelectedListener { item ->
             val target = navIds.indexOf(item.itemId)
             if (target < 0) return@setOnItemSelectedListener false
-            fm.beginTransaction().setReorderingAllowed(true).apply {
+            fm.beginTransaction().setReorderingAllowed(true).setCustomAnimations(R.animator.fade_in, R.animator.fade_out).apply {
                 tags.forEachIndexed { i, tag ->
                     val f = fm.findFragmentByTag(tag) ?: return@forEachIndexed
                     if (i == target) show(f) else hide(f)
@@ -60,7 +61,7 @@ class MainActivity : BaseActivity() {
         }
 
         onBackPressedDispatcher.addCallback(this) {
-            if (nav.selectedItemId != R.id.nav_search) nav.selectedItemId = R.id.nav_search else finish()
+            if (nav.selectedItemId != R.id.nav_search) nav.selectedItemId = R.id.nav_search else confirmExit()
         }
 
         lifecycleScope.launch {
@@ -76,6 +77,24 @@ class MainActivity : BaseActivity() {
                 result.info?.let { UpdateUi.prompt(this@MainActivity, it) }
             }
         }
+    }
+
+    /** Back on the first page would leave the app: ask first, so a stray press of the remote's Back does not. */
+    private fun confirmExit() {
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle("退出 TV Player？")
+            .apply { if (isTv()) setMessage("按返回键取消，或选“退出”离开。") }
+            .setNegativeButton("取消", null)
+            .setPositiveButton("退出") { _, _ -> finish() }
+            .create()
+        // The remote's OK key must do something at once: Back then OK leaves, a Back alone only asks. The dialog
+        // puts focus on its text first, so the button takes it once the window is up.
+        dialog.setOnShowListener {
+            val exit = dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)
+            exit.post { exit.requestFocus() }
+        }
+        dialog.show()
+        RemoteControl.cover(dialog)
     }
 
     override fun onNewIntent(intent: Intent) {

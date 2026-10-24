@@ -14,7 +14,8 @@
         android:id="@+id/nav"
         android:layout_width="wrap_content"
         android:layout_height="match_parent"
-        android:background="@color/bg"
+        android:background="@drawable/bg_nav_panel"
+        app:headerLayout="@layout/nav_header"
         app:labelVisibilityMode="labeled"
         app:menu="@menu/menu_nav"
         app:menuGravity="center" />

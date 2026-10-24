@@ -13,6 +13,11 @@ import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import coil.load
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineScope
+import com.tv.player.core.Epg
 import coil.transform.RoundedCornersTransformation
 import com.tv.player.R
 import com.tv.player.core.Hot
@@ -48,9 +53,10 @@ fun Context.gridSpan(minSpan: Int = 3): Int =
     maxOf(minSpan, (resources.displayMetrics.widthPixels / resources.displayMetrics.density / posterDp()).toInt())
 
 /** Remote-control focus feedback: the focused card grows a little. */
-fun View.zoomOnFocus() {
+fun View.zoomOnFocus(scale: Float = 1.06f, onFocus: (() -> Unit)? = null) {
     setOnFocusChangeListener { v, focused ->
-        v.animate().scaleX(if (focused) 1.06f else 1f).scaleY(if (focused) 1.06f else 1f).setDuration(120).start()
+        v.animate().scaleX(if (focused) scale else 1f).scaleY(if (focused) scale else 1f).setDuration(120).start()
+        if (focused) onFocus?.invoke()
     }
 }
 
@@ -100,7 +106,12 @@ class VodGroupAdapter(
 }
 
 /** Poster cards for the hot charts; reuses the search card layout at a fixed width. */
-class HotAdapter(private val onClick: (Hot.Item) -> Unit, private val grid: Boolean = false) : ListAdapter<Hot.Item, VodGroupAdapter.Holder>(Diff) {
+class HotAdapter(
+    private val onClick: (Hot.Item) -> Unit,
+    private val grid: Boolean = false,
+    /** Called when a card takes the remote's focus; the TV home shows that title in its banner. */
+    private val onFocus: ((Hot.Item) -> Unit)? = null,
+) : ListAdapter<Hot.Item, VodGroupAdapter.Holder>(Diff) {
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VodGroupAdapter.Holder {
         val view = LayoutInflater.from(parent.context).inflate(R.layout.item_vod, parent, false)
         view.layoutParams = RecyclerView.LayoutParams(
@@ -124,7 +135,8 @@ class HotAdapter(private val onClick: (Hot.Item) -> Unit, private val grid: Bool
         val year = item.sub.substringBefore(" / ") // older caches kept the whole "2026 / 中国大陆 / …" line
         h.subtitle.text = year
         h.subtitle.visibility = if (year.isEmpty()) View.GONE else View.VISIBLE
-        h.itemView.zoomOnFocus()
+        // On TV the focused card grows more (the banner above follows the focus, so the card needs to stand out).
+        h.itemView.zoomOnFocus(if (h.itemView.context.isTv()) 1.1f else 1.06f) { onFocus?.invoke(item) }
         h.itemView.setOnClickListener { onClick(item) }
     }
 
@@ -134,7 +146,14 @@ class HotAdapter(private val onClick: (Hot.Item) -> Unit, private val grid: Bool
     }
 }
 
-class ChannelAdapter(private val onClick: (LiveChannel) -> Unit) : ListAdapter<LiveChannel, ChannelAdapter.Holder>(Diff) {
+class ChannelAdapter(
+    private val onClick: (LiveChannel) -> Unit,
+    /** TV: rows that are shown also say what is on now (from the programme guide); null leaves that out. */
+    private val scope: CoroutineScope? = null,
+) : ListAdapter<LiveChannel, ChannelAdapter.Holder>(Diff) {
+
+    private val gate = Semaphore(3) // a few guide lookups at a time, not one per row at once
+    private val asked = HashSet<String>() // channels already asked, so a guide that has none is not asked again at every scroll
 
     class Holder(v: View) : RecyclerView.ViewHolder(v) {
         val avatar: TextView = v.findViewById(R.id.avatar)
@@ -149,10 +168,21 @@ class ChannelAdapter(private val onClick: (LiveChannel) -> Unit) : ListAdapter<L
         val c = getItem(position)
         h.avatar.text = abbreviation(c.name)
         h.name.text = c.name
-        h.lines.text = "${c.urls.size} 条线路"
-        h.itemView.zoomOnFocus()
+        val now = Epg.cached(c.name)?.current?.title
+        h.lines.text = describe(c, now)
+        if (now == null && scope != null && asked.add(c.name)) {
+            scope.launch {
+                val title = gate.withPermit { Epg.now(c.name) }?.current?.title ?: return@launch
+                val at = h.bindingAdapterPosition
+                // The row may have been reused for another channel by the time the answer comes.
+                if (at >= 0 && getItem(at).name == c.name) h.lines.text = describe(c, title)
+            }
+        }
         h.itemView.setOnClickListener { onClick(c) }
     }
+
+    private fun describe(c: LiveChannel, now: String?) =
+        if (now == null) "${c.urls.size} 条线路" else "现在：$now  ·  ${c.urls.size} 条线路"
 
     private fun abbreviation(name: String): String {
         if (name.startsWith("CCTV", ignoreCase = true)) return name.substring(4).trim().take(3).ifEmpty { "TV" }

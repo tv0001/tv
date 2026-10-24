@@ -4,12 +4,12 @@
     android:layout_width="match_parent"
     android:layout_height="64dp"
     android:clickable="true"
+    android:background="@drawable/bg_focus_row"
     android:focusable="true"
-    android:foreground="@drawable/bg_focus"
     android:gravity="center_vertical"
     android:orientation="horizontal"
-    android:paddingStart="4dp"
-    android:paddingEnd="8dp">
+    android:paddingStart="12dp"
+    android:paddingEnd="16dp">
 
     <TextView
         android:id="@+id/avatar"
@@ -42,6 +42,8 @@
             android:id="@+id/lines"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
             android:textAppearance="@style/TextAppearance.TvPlayer.Caption"
             android:textColor="@color/on_surface_variant" />
 

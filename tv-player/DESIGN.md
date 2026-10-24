@@ -54,7 +54,11 @@
 | 播放页操作（收藏、投屏、设置） | `Widget.TvPlayer.Action` | 手机：图标在上、文字在下，不用色块。电视：画面全屏，操作放在底部控制栏（`activity_play_overlay.xml`），按确认键或下键弹出，播放时 6 秒无操作自动隐藏，返回键先收起控制栏；电视上不显示投屏 |
 | 卡片 | `Widget.TvPlayer.Card` | `surface` 底，16dp 圆角，无阴影 |
 | 海报角标 | `bg_badge_muted`（来源数）、`bg_badge`（"新"） | 只有需要注意的信息才用蓝色 |
-| 遥控器焦点 | `drawable/bg_focus.xml`、`zoomOnFocus()` | 2–3dp 蓝色描边并轻微放大 |
+| 遥控器焦点（海报、方块卡片） | `drawable/bg_focus.xml`、`zoomOnFocus()` | 2–3dp 蓝色描边并放大（电视 1.1 倍）。放大会超出自己的格子，所以所在的滚动区域要留出余量（内边距，纵向滚动再加 `fadingEdgeLength`），否则边缘被裁 |
+| 遥控器焦点（整行宽度的列表项，如直播频道） | `drawable/bg_focus_row.xml` | 不放大：一行放大一定会被列表左右边界裁掉。用行内圆角描边加淡底色，全部画在行里面 |
+| 侧边导航（电视、平板） | `bg_nav_panel.xml`、`nav_header.xml`、`Widget.TvPlayer.NavRail` | 导航放在自己的圆角面板上（`surface` 底），顶部是应用标记；选中项用浅蓝字加 `accent_container` 指示条，其余灰色 |
+| 切换动画 | `res/animator/fade_*.xml`、`res/anim/page_*.xml`、`Animation.TvPlayer.Page` | 只用透明度和 0.98→1 的轻微缩放，100–180 毫秒，不做位移或模糊动画，弱盒子上也不卡；系统的「动画缩放」关闭时自动失效 |
+| 电视首页 | `view_tv_hero.xml`、`SearchFragment` | 顶部固定一块横幅（不放进滚动区），焦点移到哪部片它就显示哪部：模糊海报做背景，右侧放清晰海报；下面是横向行（继续观看、各榜单）。横幅更新延迟 150 毫秒，避免快速滑动时闪烁 |
 | 输入框 | `Widget.Material3.TextInputLayout.OutlinedBox` | |
 | 弹窗 | `MaterialAlertDialogBuilder` | 标题说清楚要做什么，确认按钮写动作本身（"清空""移除"），不用"确定" |
 

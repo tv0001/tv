@@ -178,13 +178,17 @@
                 android:paddingEnd="8dp"
                 android:paddingBottom="8dp" />
 
-            <androidx.core.widget.NestedScrollView
+            <com.tv.player.ui.RowScrollView
                 android:id="@+id/hotRows"
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
                 android:layout_weight="1"
+                android:clipToPadding="false"
+                android:fadingEdgeLength="40dp"
                 android:focusable="false"
                 android:overScrollMode="never"
+                android:paddingTop="14dp"
+                android:requiresFadingEdge="vertical"
                 android:visibility="gone">
 
                 <LinearLayout
@@ -194,7 +198,7 @@
                     android:orientation="vertical"
                     android:paddingBottom="16dp" />
 
-            </androidx.core.widget.NestedScrollView>
+            </com.tv.player.ui.RowScrollView>
 
         </LinearLayout>
 

@@ -125,7 +125,7 @@ class PlayActivity : BaseActivity() {
         private const val BACKGROUND_PROBE_MS = 10_000L
         private const val QUICK_MS = 6 * 3600_000L
         private const val MAX_SHOWS = 200 // programmes listed for replay
-        private const val LINES_FOLD = 2 // more lines than this get the expand row
+        private const val LINES_FOLD = 4 // more lines than this get the "全部 N 条" row; fewer fit in the row anyway
         private val DIRECT = Regex("\\.(m3u8|mp4|flv|mkv)(\\?|$)", RegexOption.IGNORE_CASE)
 
         fun startVod(context: Context, group: VodGroup) = context.startActivity(

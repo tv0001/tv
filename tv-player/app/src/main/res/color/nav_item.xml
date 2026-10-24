@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Side navigation: the selected page reads in the light-blue used on accent_container, the others stay muted. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:color="#D6E4FF" android:state_selected="true" />
+    <item android:color="@color/on_surface" android:state_focused="true" />
+    <item android:color="@color/on_surface_variant" />
+</selector>

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Focus for a full-width row: a faint fill and a 2dp stroke inside the row, so nothing grows past the list's edges. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_focused="true">
+        <inset
+            android:insetBottom="2dp"
+            android:insetTop="2dp">
+            <shape>
+                <solid android:color="#1AFFFFFF" />
+                <stroke
+                    android:width="2dp"
+                    android:color="@color/accent" />
+                <corners android:radius="12dp" />
+            </shape>
+        </inset>
+    </item>
+    <item android:state_pressed="true">
+        <inset
+            android:insetBottom="2dp"
+            android:insetTop="2dp">
+            <shape>
+                <solid android:color="#22FFFFFF" />
+                <corners android:radius="12dp" />
+            </shape>
+        </inset>
+    </item>
+    <item>
+        <shape>
+            <solid android:color="@android:color/transparent" />
+        </shape>
+    </item>
+</selector>

@@ -1,9 +1,9 @@
 {
-  "versionCode": 13,
-  "versionName": "1.0.12",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.12.apk",
-  "sha256": "df8692e2bb2d539ccd0b3e040f86b5a8d047d99dbffdb70ba75d399705cc06be",
-  "size": 3117578,
-  "notes": "改进：订阅（点播源和直播源）更新也同时查询多个 GitHub 镜像，最快的先用；GitHub 自身的副本优先\n修复：检查更新找不到最新版本（同时查询多个镜像，取最新清单）\n改进：下载从多个镜像同时发起，用最快响应的那个\n修复：电视版播放详情页需要多次返回才能退出，现在按一次返回即可",
+  "versionCode": 14,
+  "versionName": "1.0.13",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.13.apk",
+  "sha256": "27bcfdd0f9996580a3bf4ea5f82e5be3aeecbb7777f157923ae9ec31fd59e8aa",
+  "size": 3126455,
+  "notes": "新增：电视首页改版（顶部横幅跟随焦点、继续观看、追剧更新、高分推荐、横向行）和圆角侧边导航\n新增：直播列表显示每个频道正在播的节目；选中频道不再被左右裁切\n新增：电视版退出前二次确认；页面切换加入轻量淡入动画\n改进：线路列表合并所有源，点「全部 N 条」选择\n改进：订阅和更新检查同时查询多个 GitHub 镜像\n修复：电视播放详情页需要多次返回才能退出",
   "force": false
 }
