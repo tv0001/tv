@@ -1,9 +1,9 @@
 {
-  "versionCode": 20,
-  "versionName": "1.0.19",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.19.apk",
-  "sha256": "6a2d98a0c3415eba8639714114711b8b361c47e7d46d8aa0e8fa8b31d64ebfe0",
-  "size": 3134703,
-  "notes": "修复：播放中手动换线路或换源时从当前位置接着播，不再回到开头；换线前先保存进度\n改进：换到长度不同的流（如一集合全集）位置超出时自动从头播",
+  "versionCode": 21,
+  "versionName": "1.0.20",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.20.apk",
+  "sha256": "59a4865655b9405990cda5220681b7334d3db98cc4a85858057c5cd627b9bd34",
+  "size": 3138799,
+  "notes": "新增：应用更新支持断点续传（中断后下次接着下）和后台下载（通知栏显示进度，完成后提示安装）",
   "force": false
 }

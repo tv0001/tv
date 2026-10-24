@@ -111,8 +111,10 @@ object AppUpdate {
      * The first mirror that answers with a file wins: the others are cancelled, so the download comes from the fastest
      * one. Fails only when no mirror has the file.
      */
-    private suspend fun openFirst(urls: List<String>, client: OkHttpClient): Response {
-        val calls = urls.map { client.newCall(Request.Builder().url(it).header("User-Agent", Http.UA).build()) }
+    private suspend fun openFirst(urls: List<String>, client: OkHttpClient, headers: Map<String, String> = emptyMap()): Response {
+        val calls = urls.map { url ->
+            client.newCall(Request.Builder().url(url).header("User-Agent", Http.UA).apply { headers.forEach { (k, v) -> header(k, v) } }.build())
+        }
         val answers = Channel<Pair<Call, Response?>>(calls.size)
         val jobs = calls.map { call -> fetchScope.launch { answers.send(call to runCatching { call.execute() }.getOrNull()) } }
         var winner: Response? = null
@@ -150,22 +152,91 @@ object AppUpdate {
         }
     }
 
-    /** Downloads into the cache directory and verifies the hash. Throws with a readable message on failure. */
+    private fun updatesDir(context: Context) = File(context.cacheDir, "updates").apply { mkdirs() }
+
+    /**
+     * A finished download of [info] still in the cache, checked against the manifest's hash again (the same version
+     * code may have been re-published); null when there is none. Hashes the file: call it off the main thread.
+     */
+    fun ready(context: Context, info: Info): File? {
+        val file = File(updatesDir(context), "app-${info.code}.apk")
+        if (!file.isFile || file.length() == 0L || (info.size > 0 && file.length() != info.size)) return null
+        if (info.sha256.isNotEmpty() && sha256(file) != info.sha256) {
+            file.delete()
+            return null
+        }
+        return file
+    }
+
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { s ->
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                val n = s.read(buf)
+                if (n < 0) break
+                digest.update(buf, 0, n)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    /** Bytes a broken-off download of [info] left behind; the next download goes on from there. */
+    fun partialBytes(context: Context, info: Info): Long = File(updatesDir(context), "app-${info.code}.apk.part").length()
+
+    /**
+     * Downloads into the cache directory and verifies the hash. Throws with a readable message on failure. A download
+     * that broke off (network gone, app killed, cancelled) left `.part` behind: it is continued with a Range request,
+     * and the bytes already there are hashed first so the check still covers the whole file. A mirror that ignores
+     * the range answers 200 with the whole file, which then simply starts over.
+     */
     suspend fun download(context: Context, info: Info, onProgress: (done: Long, total: Long) -> Unit): File =
         withContext(Dispatchers.IO) {
-            val dir = File(context.cacheDir, "updates").apply { mkdirs() }
-            dir.listFiles()?.forEach { it.delete() }
+            val dir = updatesDir(context)
+            val part = File(dir, "app-${info.code}.apk.part")
             val file = File(dir, "app-${info.code}.apk")
+            dir.listFiles()?.forEach { if (it != part) it.delete() } // other versions, or a copy that failed its check
+            var have = part.length()
+            if (info.size in 1..have) {
+                part.delete() // at least as big as the whole file: not a usable remainder
+                have = 0
+            }
+            val digest = MessageDigest.getInstance("SHA-256")
+            val buf = ByteArray(64 * 1024)
+            if (have > 0) part.inputStream().use { s ->
+                while (true) {
+                    ensureActive()
+                    val n = s.read(buf)
+                    if (n < 0) break
+                    digest.update(buf, 0, n)
+                }
+            }
             val client = Http.client.newBuilder().readTimeout(30, TimeUnit.SECONDS).build()
-            openFirst(mirrorsOf(info.url), client).use { r ->
+            val headers = if (have > 0) mapOf("Range" to "bytes=$have-") else emptyMap()
+            val response = try {
+                openFirst(mirrorsOf(info.url), client, headers)
+            } catch (e: IllegalStateException) {
+                // 416: no mirror can continue from here (the remainder is not of this file): start over without it.
+                if (have > 0 && e.message?.contains("416") == true) {
+                    part.delete()
+                    return@withContext download(context, info, onProgress)
+                }
+                throw e
+            }
+            response.use { r ->
                 if (!r.isSuccessful) error("下载失败（HTTP ${r.code}）")
                 val body = r.body ?: error("下载失败：没有内容")
-                val total = body.contentLength().takeIf { it > 0 } ?: info.size
-                val digest = MessageDigest.getInstance("SHA-256")
+                val resuming = have > 0 && r.code == 206
+                android.util.Log.d("TVP", "update download: HTTP ${r.code} from ${r.request.url.host}, had $have bytes, resuming=$resuming")
+                if (!resuming) {
+                    digest.reset()
+                    have = 0
+                }
+                val total = body.contentLength().takeIf { it > 0 }?.let { it + have } ?: info.size
                 body.byteStream().use { input ->
-                    file.outputStream().use { out ->
-                        val buf = ByteArray(64 * 1024)
-                        var done = 0L
+                    java.io.FileOutputStream(part, resuming).use { out ->
+                        var done = have
+                        onProgress(done, total)
                         while (true) {
                             ensureActive()
                             val n = input.read(buf)
@@ -179,10 +250,11 @@ object AppUpdate {
                 }
                 val hex = digest.digest().joinToString("") { "%02x".format(it) }
                 if (info.sha256.isNotEmpty() && hex != info.sha256) {
-                    file.delete()
+                    part.delete()
                     error("校验失败：下载的文件和发布信息对不上，已丢弃")
                 }
             }
+            if (!part.renameTo(file)) error("保存更新文件失败")
             file
         }
 
