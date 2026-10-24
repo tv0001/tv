@@ -1,9 +1,9 @@
 {
-  "versionCode": 11,
-  "versionName": "1.0.10",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.10.apk",
-  "sha256": "537ae376f40118b0e6bb5c4a8a18cebe06896b1822b1dcf34024a141f4c1fd8c",
+  "versionCode": 12,
+  "versionName": "1.0.11",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.11.apk",
+  "sha256": "a7f9b58f10f2457703a068238d84b07387fdb96ef3b1b640bf2c9d8fce2f0eb4",
   "size": 3113482,
-  "notes": "修复：电视版播放详情页需要多次返回才能退出，现在按一次返回即可\n修复：电视版全屏后返回的方向问题（只影响电视，手机不变）",
+  "notes": "修复：检查更新找不到最新版本（同时查询多个 GitHub 镜像，取最新的清单）\n改进：下载从多个镜像同时发起，用最快响应的那个\n修复：电视版播放详情页需要多次返回才能退出，现在按一次返回即可\n修复：电视版全屏后返回的方向问题（只影响电视，手机不变）",
   "force": false
 }
