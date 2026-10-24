@@ -1,9 +1,48 @@
 package com.tv.player.core
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+
 object Updater {
+    /** After the first usable answer, GitHub itself gets this long: its copy is never stale, so it is worth waiting a little. */
+    private const val GRACE_MS = 3_000L
+    private val mirrorScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * One subscription file. With the default source it is asked from every mirror at once: the first usable answer wins,
+     * but GitHub's own copy wins over it if it arrives within [GRACE_MS] (a mirror can keep an old copy for hours).
+     */
+    private suspend fun fetchFile(url: String, mirrored: Boolean): Http.Resp {
+        if (!mirrored) return Http.get(url, timeoutMs = 25_000)
+        val urls = AppUpdate.mirrorsOf(url)
+        val raw = urls.indexOfFirst { it.startsWith("https://raw.githubusercontent.com/") }
+        val answers = Channel<Pair<Int, Http.Resp>>(urls.size)
+        val jobs = urls.mapIndexed { i, u -> mirrorScope.launch { answers.send(i to Http.get(u, timeoutMs = 25_000)) } }
+        var chosen: Http.Resp? = null
+        var failure: Http.Resp? = null
+        var answered = 0
+        while (answered < urls.size) {
+            val (i, r) = if (chosen == null) answers.receive() else (withTimeoutOrNull(GRACE_MS) { answers.receive() } ?: break)
+            answered++
+            if (r.status != 200 || r.text.isEmpty()) {
+                failure = failure ?: r
+                continue
+            }
+            if (chosen == null || i == raw) chosen = r
+            if (i == raw) break
+        }
+        jobs.forEach { it.cancel() }
+        return chosen ?: failure ?: Http.Resp(0, "", url, "没有可用的镜像")
+    }
+
     /** Downloads best.json and live.txt from [base], then refreshes every custom live list. Returns (anything updated, message). */
     suspend fun update(base: String, auto: Boolean = false): Pair<Boolean, String> {
         val dir = base.trim().let { if (it.endsWith("/")) it else "$it/" }
+        val mirrored = dir == Store.DEFAULT_BASE
         val notes = ArrayList<String>()
         var any = false
         if (!auto) {
@@ -13,7 +52,7 @@ object Updater {
 
         val skipConfig = auto && Store.isPinned("config")
         val skipLive = auto && Store.isPinned("live")
-        val cfg = if (skipConfig) Http.Resp(0, "", dir) else Http.get(dir + "best.json", timeoutMs = 25_000)
+        val cfg = if (skipConfig) Http.Resp(0, "", dir) else fetchFile(dir + "best.json", mirrored)
         if (skipConfig) {
             notes += "点播源是手动导入的，已跳过"
         } else if (cfg.status == 200) {
@@ -29,7 +68,7 @@ object Updater {
             notes += "best.json 下载失败（${cfg.error ?: "HTTP ${cfg.status}"}）"
         }
 
-        val live = if (skipLive) Http.Resp(0, "", dir) else Http.get(dir + "live.txt", timeoutMs = 25_000)
+        val live = if (skipLive) Http.Resp(0, "", dir) else fetchFile(dir + "live.txt", mirrored)
         if (skipLive) {
             notes += "直播列表是手动导入的，已跳过"
         } else if (live.status == 200) {
@@ -46,7 +85,7 @@ object Updater {
         }
 
         // Extra CMS sites that the crawler verified with a real search; optional, so a missing file is not an error.
-        val cms = Http.get(dir + "cms.json", timeoutMs = 25_000)
+        val cms = fetchFile(dir + "cms.json", mirrored)
         if (cms.status == 200) {
             val n = runCatching { Store.parseSources(cms.text).size }.getOrDefault(0)
             if (n > 0) {
