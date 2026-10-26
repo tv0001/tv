@@ -60,6 +60,11 @@
             android:exported="false" />
 
         <activity
+            android:name=".ui.ShareActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
+            android:exported="false" />
+
+        <activity
             android:name=".ui.PanActivity"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
             android:exported="false" />

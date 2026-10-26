@@ -195,6 +195,14 @@ object Store {
 
     fun setQuarkTokens(refresh: String, access: String) = prefs.edit().putString("quark_refresh", refresh).putString("quark_access", access).apply()
 
+    // ---- 夸克网盘, web session (transferring shares needs it; the TV token cannot) --------------------------------
+
+    fun quarkWebPus(): String = prefs.getString("quark_web_pus", "") ?: ""
+
+    fun quarkWebPuus(): String = prefs.getString("quark_web_puus", "") ?: ""
+
+    fun setQuarkWebCookies(pus: String, puus: String) = prefs.edit().putString("quark_web_pus", pus).putString("quark_web_puus", puus).apply()
+
     /** "tabs": one chart per top tab as a grid; "rows": all charts stacked, each scrolling sideways. */
     fun hotLayout(): String = prefs.getString("hot_layout", "tabs") ?: "tabs"
 

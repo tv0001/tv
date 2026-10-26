@@ -43,7 +43,7 @@ class PanActivity : BaseActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_pan)
-        if (isTv()) findViewById<ViewGroup>(android.R.id.content).getChildAt(0).setPadding(dp(48), dp(27), dp(48), dp(27))
+        if (isTv()) findViewById<View>(R.id.panContent).setPadding(dp(48), dp(27), dp(48), dp(27)) // overscan-safe area
         heading = findViewById(R.id.heading)
         status = findViewById(R.id.status)
         progress = findViewById(R.id.progress)
@@ -52,6 +52,7 @@ class PanActivity : BaseActivity() {
         empty.findViewById<ImageView>(R.id.emptyIcon).setImageResource(R.drawable.ic_short)
         empty.findViewById<TextView>(R.id.emptyTitle).text = "这个文件夹是空的"
         empty.findViewById<TextView>(R.id.emptySub).text = "在手机的夸克 App 里把视频放进网盘，这里就能看到"
+        findViewById<View>(R.id.addShare).setOnClickListener { ShareActivity.prompt(this) }
         list.layoutManager = LinearLayoutManager(this)
         list.adapter = adapter
         list.isFocusable = false // RecyclerView overrides the layout's focusable="false"; the rows take the focus
@@ -79,7 +80,11 @@ class PanActivity : BaseActivity() {
         job = lifecycleScope.launch {
             try {
                 val files = Quark.list(fid)
-                adapter.submitList(files) { list.scrollToPosition(0) }
+                adapter.submitList(files) {
+                    list.scrollToPosition(0)
+                    // The "添加分享链接" button comes first in the layout; the remote should start on the files.
+                    if (isTv()) list.post { list.findViewHolderForAdapterPosition(0)?.itemView?.requestFocus() }
+                }
                 status.text = ""
                 empty.visibility = if (files.isEmpty()) View.VISIBLE else View.GONE
             } catch (e: Quark.ApiException) {

@@ -12,6 +12,7 @@ object Resolve {
      */
     suspend fun stream(playUrl: String): String? {
         // A drive file: its address is fetched now, as the drive hands out addresses that expire.
+        if (QuarkWeb.isLink(playUrl)) return runCatching { QuarkWeb.link(playUrl) }.getOrNull()
         if (Quark.isLink(playUrl)) return runCatching { Quark.link(playUrl) }.getOrNull()
         val u = runCatching { URL(playUrl) }.getOrNull() ?: return null
         val pathAndQuery = u.path + (u.query?.let { "?$it" } ?: "")

@@ -60,6 +60,7 @@ import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -86,6 +87,7 @@ import com.tv.player.core.Http
 import com.tv.player.core.LineProbe
 import com.tv.player.core.Library
 import com.tv.player.core.Quark
+import com.tv.player.core.QuarkWeb
 import com.tv.player.core.Resolve
 import com.tv.player.core.Store
 import com.tv.player.core.Subtitles
@@ -319,7 +321,8 @@ class PlayActivity : BaseActivity() {
         }
 
         val httpFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent(Http.UA)
+            // As a default property (not setUserAgent, which is applied last and would replace a per-request one).
+            .setDefaultRequestProperties(mapOf("User-Agent" to Http.UA))
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(8_000)
             .setReadTimeoutMs(10_000)
@@ -332,7 +335,13 @@ class PlayActivity : BaseActivity() {
         player = ExoPlayer.Builder(this)
             .setLoadControl(loadControl)
             .setMediaSourceFactory(
-                DefaultMediaSourceFactory(DefaultDataSource.Factory(this, httpFactory)).setLoadErrorHandlingPolicy(failFast),
+                // Drive addresses (web login) need the session cookies on every request to the drive's hosts.
+                DefaultMediaSourceFactory(
+                    ResolvingDataSource.Factory(DefaultDataSource.Factory(this, httpFactory)) { spec ->
+                        val extra = spec.uri.host?.let(QuarkWeb::headersFor)
+                        if (extra == null) spec else spec.withRequestHeaders(spec.httpRequestHeaders + extra)
+                    },
+                ).setLoadErrorHandlingPolicy(failFast),
             )
             .setAudioAttributes(AudioAttributes.DEFAULT, true)
             .setHandleAudioBecomingNoisy(true)
@@ -718,7 +727,7 @@ class PlayActivity : BaseActivity() {
                     player?.stop()
                     allFailed = true
                     updateKeepScreen()
-                    setInfo("所有线路都试过了，没有能播放的。点这里重试，或换一部")
+                    setInfo(if (QuarkWeb.expired && items.any { it.sourceKey == QuarkWeb.SOURCE_KEY }) "夸克网盘的网页版登录已失效，请到设置里重新扫码登录" else "所有线路都试过了，没有能播放的。点这里重试，或换一部")
                     return@launch
                 }
                 setInfo("正在连接：${cand.label}")
@@ -920,6 +929,7 @@ class PlayActivity : BaseActivity() {
         val item = items[index]
         // A drive folder: its video files are the episodes.
         if (item.sourceKey == Quark.SOURCE_KEY) return runCatching { withTimeoutOrNull(15_000) { Quark.detail(item.id, item.title) } }.getOrNull()
+        if (item.sourceKey == QuarkWeb.SOURCE_KEY) return runCatching { withTimeoutOrNull(15_000) { QuarkWeb.detail(item.id, item.title) } }.getOrNull()
         val source = sources[item.sourceKey] ?: return null
         return try {
             withTimeoutOrNull(12_000) { Cms.detail(source, item.id) }.also { Log.d("TVP", "detail ${item.sourceName}: ${if (it == null) "none" else "ok"}") }

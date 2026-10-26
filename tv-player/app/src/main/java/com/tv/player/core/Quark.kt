@@ -201,7 +201,7 @@ object Quark {
         return VodDetail(title, videos.firstOrNull { it.thumb.isNotEmpty() }?.thumb.orEmpty(), lines, remarks = "共 ${videos.size} 个视频")
     }
 
-    fun isLink(url: String) = url.startsWith(SCHEME)
+    fun isLink(url: String) = url.startsWith(SCHEME) || QuarkWeb.isLink(url)
 
     /** "quark://<fid>?q=<quality>" -> fid and quality. */
     fun parseLink(url: String): Pair<String, String> {

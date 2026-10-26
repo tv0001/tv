@@ -622,6 +622,29 @@
                     android:layout_marginTop="8dp"
                     android:text="打开我的网盘" />
 
+                <TextView
+                    android:id="@+id/panWebStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:textAppearance="@style/TextAppearance.TvPlayer.Body" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/panWeb"
+                    style="@style/Widget.TvPlayer.TonalButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="扫码登录（转存分享用）" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/panShare"
+                    style="@style/Widget.TvPlayer.TonalButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="添加分享链接" />
+
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

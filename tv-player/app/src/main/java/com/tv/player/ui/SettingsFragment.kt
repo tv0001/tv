@@ -20,6 +20,7 @@ import com.tv.player.core.AppUpdate
 import com.tv.player.core.Backup
 import com.tv.player.core.Library
 import com.tv.player.core.Quark
+import com.tv.player.core.QuarkWeb
 import com.tv.player.core.Store
 import com.tv.player.core.Updater
 import kotlinx.coroutines.Dispatchers
@@ -88,6 +89,24 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             }
         }
         view.findViewById<View>(R.id.panOpen).setOnClickListener { PanActivity.start(requireContext()) }
+
+        val panWebStatus = view.findViewById<TextView>(R.id.panWebStatus)
+        val panWeb = view.findViewById<MaterialButton>(R.id.panWeb)
+        fun syncPanWeb() {
+            val on = QuarkWeb.loggedIn
+            panWebStatus.text = if (on) "网页版已登录：可以把别人的分享转存到你的网盘并播放" else "转存别人的分享要用网页版登录，和上面的登录是两套"
+            panWeb.text = if (on) "退出网页版登录" else "扫码登录（转存分享用）"
+        }
+        syncPanWeb()
+        panWeb.setOnClickListener {
+            if (QuarkWeb.loggedIn) {
+                QuarkWeb.logout()
+                syncPanWeb()
+            } else {
+                PanLogin.showWeb(requireActivity() as AppCompatActivity, onDone = { syncPanWeb() })
+            }
+        }
+        view.findViewById<View>(R.id.panShare).setOnClickListener { ShareActivity.prompt(requireActivity() as AppCompatActivity) }
 
         val dm = resources.displayMetrics
         view.findViewById<TextView>(R.id.screenInfo).text =

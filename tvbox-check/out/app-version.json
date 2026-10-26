@@ -1,9 +1,9 @@
 {
-  "versionCode": 23,
-  "versionName": "1.0.22",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.22.apk",
-  "sha256": "4f41a04da9ef6cd128f7f3ab7fc997210654f0a9c2e1ee74d989bf4b01e9bf37",
-  "size": 3151143,
-  "notes": "改进：电视全屏点播时，确认键直接暂停 / 播放（画面中央有提示），下键打开下方设置；长按确认键只切换一次",
+  "versionCode": 24,
+  "versionName": "1.0.23",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.23.apk",
+  "sha256": "70d09ce9ba474a4a4e44d94bf28f67410fc7908bd638d30da91a1f7cc6eb7183",
+  "size": 3163431,
+  "notes": "新增：夸克网盘分享链接。在「设置」或网盘页粘贴 pan.quark.cn 分享链接，无需登录就能浏览；点视频会转存到你网盘的「TV Player」文件夹并播放（需扫码登录一次夸克网页版）。已登录 TV 版网盘时优先用它播放，更稳。",
   "force": false
 }
