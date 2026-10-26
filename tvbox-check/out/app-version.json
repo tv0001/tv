@@ -1,9 +1,9 @@
 {
-  "versionCode": 22,
-  "versionName": "1.0.21",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.21.apk",
-  "sha256": "1712c7efb6eb6691e26c709898511ce6209c1fc6ad8ecbe4deef86c2a3db2230",
+  "versionCode": 23,
+  "versionName": "1.0.22",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.22.apk",
+  "sha256": "4f41a04da9ef6cd128f7f3ab7fc997210654f0a9c2e1ee74d989bf4b01e9bf37",
   "size": 3151143,
-  "notes": "新增：夸克网盘。设置里扫码登录（手机夸克 App 扫码），在「我的」页打开网盘按文件夹浏览，点视频直接播放，同一文件夹的视频是选集，线路有原画 / 超清 / 高清 / 普通",
+  "notes": "改进：电视全屏点播时，确认键直接暂停 / 播放（画面中央有提示），下键打开下方设置；长按确认键只切换一次",
   "force": false
 }

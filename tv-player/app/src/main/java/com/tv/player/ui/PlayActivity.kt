@@ -127,6 +127,7 @@ class PlayActivity : BaseActivity() {
         private const val QUICK_MS = 6 * 3600_000L
         private const val MAX_SHOWS = 200 // programmes listed for replay
         private const val LINES_FOLD = 4 // more lines than this get the "全部 N 条" row; fewer fit in the row anyway
+        private val OK_KEYS = setOf(KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER)
         private val DIRECT = Regex("\\.(m3u8|mp4|flv|mkv)(\\?|$)", RegexOption.IGNORE_CASE)
 
         /** [startEp] >= 0 opens that episode (a file picked in the drive browser) instead of the one last watched. */
@@ -1817,10 +1818,21 @@ class PlayActivity : BaseActivity() {
             if (panel?.visibility == View.VISIBLE) {
                 bumpPanel() // the user is using the bar: keep it up
             } else {
+                // On demand the bar opens with DOWN (or MENU), and OK on the bare picture plays / pauses. Live has no
+                // play / pause and DOWN is the previous channel there, so OK opens the bar on live.
                 val show = when (event.keyCode) {
-                    KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_MENU -> true
-                    KeyEvent.KEYCODE_DPAD_DOWN -> !isLive // live: down is the previous channel
+                    KeyEvent.KEYCODE_MENU -> true
+                    KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> isLive
+                    KeyEvent.KEYCODE_DPAD_DOWN -> !isLive
                     else -> false
+                }
+                if (!isLive && event.keyCode in OK_KEYS) {
+                    // Holding OK repeats the key: only the first press toggles. playWhenReady (not isPlaying) so a press
+                    // while buffering pauses instead of "playing" again.
+                    if (event.repeatCount == 0) player?.let { p ->
+                        if (p.playWhenReady) { p.pause(); flashHud("已暂停", 1200) } else { p.play(); flashHud("播放", 700) }
+                    }
+                    return true
                 }
                 if (show) {
                     setPanelVisible(true)
@@ -1828,6 +1840,8 @@ class PlayActivity : BaseActivity() {
                 }
             }
         }
+        // The release of OK on the bare picture is swallowed too, so the player view does not act on it as well.
+        if (overlay && !isLive && panel?.visibility != View.VISIBLE && event.action == KeyEvent.ACTION_UP && event.keyCode in OK_KEYS) return true
         // With the TV bar hidden the picture is all there is, whatever currently holds focus.
         val onPicture = playerView.hasFocus() || (overlay && panel?.visibility != View.VISIBLE)
         if (overlay && event.action == KeyEvent.ACTION_DOWN && onPicture && !playerView.isControllerFullyVisible) {
