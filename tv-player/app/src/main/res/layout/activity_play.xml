@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/bg"
@@ -49,6 +50,20 @@
         app:show_buffering="when_playing"
         app:use_controller="true" />
 
+    <!-- Under a tall picture: pull it down for the full screen. Gone (and no room taken) for everything else. -->
+    <ImageView
+        android:id="@+id/pullArrow"
+        android:layout_width="0dp"
+        android:layout_height="30dp"
+        android:alpha="0.85"
+        android:contentDescription="下拉全屏"
+        android:scaleType="centerInside"
+        android:src="@drawable/ic_pull_down"
+        android:visibility="gone"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/player" />
+
     <LinearLayout
         android:id="@+id/content"
         android:layout_width="0dp"
@@ -57,7 +72,7 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/player">
+        app:layout_constraintTop_toBottomOf="@id/pullArrow">
 
         <TextView
             android:id="@+id/info"
@@ -147,5 +162,92 @@
             android:paddingBottom="12dp" />
 
     </LinearLayout>
+
+    <!-- The tall full screen (short dramas): the picture above grows to fill the screen and this layer fades in over it. -->
+    <FrameLayout
+        android:id="@+id/vOverlay"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <ImageButton
+            android:id="@+id/vBack"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="top|start"
+            android:layout_margin="12dp"
+            android:background="@drawable/bg_overlay_button"
+            android:contentDescription="@string/back"
+            android:src="@drawable/ic_back" />
+
+        <TextView
+            android:id="@+id/vTitle"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_gravity="top"
+            android:layout_marginStart="72dp"
+            android:layout_marginTop="12dp"
+            android:layout_marginEnd="204dp"
+            android:ellipsize="end"
+            android:gravity="center_vertical"
+            android:maxLines="1"
+            android:shadowColor="#99000000"
+            android:shadowRadius="6"
+            android:textColor="@android:color/white"
+            android:textSize="16sp" />
+
+        <TextView
+            android:id="@+id/vEpisodes"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:layout_gravity="top|end"
+            android:layout_marginTop="18dp"
+            android:layout_marginEnd="124dp"
+            android:background="@drawable/bg_overlay_pill"
+            android:gravity="center"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:text="选集"
+            android:textColor="@android:color/white"
+            android:textSize="14sp"
+            android:visibility="gone" />
+
+        <ImageButton
+            android:id="@+id/vSettings"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="top|end"
+            android:layout_marginTop="12dp"
+            android:layout_marginEnd="68dp"
+            android:background="@drawable/bg_overlay_button"
+            android:contentDescription="播放设置"
+            android:src="@drawable/ic_settings" />
+
+        <ImageButton
+            android:id="@+id/vCast"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="top|end"
+            android:layout_margin="12dp"
+            android:background="@drawable/bg_overlay_button"
+            android:contentDescription="@string/cast"
+            android:src="@drawable/ic_cast" />
+
+        <!-- Where the episode is, while the controls are away (they carry their own time bar). -->
+        <ProgressBar
+            android:id="@+id/vProgress"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="2dp"
+            android:layout_gravity="bottom"
+            android:max="1000"
+            android:progressTint="@android:color/white"
+            android:progressBackgroundTint="#33FFFFFF" />
+
+    </FrameLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

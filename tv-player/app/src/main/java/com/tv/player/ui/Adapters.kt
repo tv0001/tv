@@ -196,6 +196,19 @@ class ChannelAdapter(
 
 /** A row of selectable text chips, used for play lines and episodes. */
 /** [fill]: cells take the full grid column (episodes), otherwise they size to their text (lines). */
+/**
+ * A list for inside an AlertDialog. The dialog gives a custom view all the room that is left and ignores the height it asks
+ * for, so a long list pushes the buttons under it off the bottom on some screens. Measured with a ceiling instead, the
+ * dialog is as tall as title + list + buttons need and the buttons always have their place.
+ */
+class BoundedRecyclerView(context: Context, private val maxHeight: Int) : RecyclerView(context) {
+    override fun onMeasure(widthSpec: Int, heightSpec: Int) {
+        // Never taller than the ceiling, nor than the room the parent offers (a split screen or a small window).
+        val room = if (MeasureSpec.getMode(heightSpec) == MeasureSpec.UNSPECIFIED) maxHeight else minOf(maxHeight, MeasureSpec.getSize(heightSpec))
+        super.onMeasure(widthSpec, MeasureSpec.makeMeasureSpec(room, MeasureSpec.AT_MOST))
+    }
+}
+
 class ChipAdapter(var fill: Boolean = false, private val onClick: (Int) -> Unit) : RecyclerView.Adapter<ChipAdapter.Holder>() {
     class Holder(val text: TextView) : RecyclerView.ViewHolder(text)
 

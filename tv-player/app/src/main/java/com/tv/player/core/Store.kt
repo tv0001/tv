@@ -238,6 +238,11 @@ object Store {
 
     fun setAiSearch(on: Boolean) = prefs.edit().putBoolean("ai_search", on).apply()
 
+    /** How often the "swipe for the next episode" tip in the tall full screen has been shown; dropped after a few times. */
+    fun swipeTips(): Int = prefs.getInt("swipe_tips", 0)
+
+    fun bumpSwipeTips() = prefs.edit().putInt("swipe_tips", swipeTips() + 1).apply()
+
     /** How often the "pull down for a tall full screen" tip has been shown; it is dropped after a few times. */
     fun vfullTips(): Int = prefs.getInt("vfull_tips", 0)
 

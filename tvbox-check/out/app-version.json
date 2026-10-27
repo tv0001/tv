@@ -1,9 +1,9 @@
 {
-  "versionCode": 25,
-  "versionName": "1.0.24",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.24.apk",
-  "sha256": "b4ecfc44c055b87f8045cd976569ab000d99339b919ae97c32ab76e4ce7e74a3",
-  "size": 3175775,
-  "notes": "搜索更聪明：支持一句话搜索（如“想看一部女主重生的短剧”），输错片名会提示你是不是想找某部，搜不到时自动换更短的词重试。新增实验功能“AI 辅助搜索”（设置里手动开启，默认关闭）。手机短剧支持竖屏全屏：在竖屏视频上下拉进入、上拉退出，竖屏全屏里可用左右边缘调亮度/音量、点“选集”切集。修复手机上点画面叫不出播放控制条的问题。",
+  "versionCode": 26,
+  "versionName": "1.0.25",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.25.apk",
+  "sha256": "83abbd06e439e427cec4f72d0b428100d60f6706a99816122ffda6ac967cf54d",
+  "size": 3212695,
+  "notes": "短剧：新增分类（重生、穿越、总裁…共 16 个题材）、短剧内搜索和筛选（排序/状态/年份/来源）；手机上竖屏短剧可以下拉全屏，视频跟着手指放大，进入后上滑下一集、下滑上一集，也可点“选集”；倍速最高 3×。播放：提前预载下一集和前后集，换集更快；边播边缓存，回看不重复下载；弱网卡顿后自动多缓冲一会儿。修复若干小问题。",
   "force": false
 }

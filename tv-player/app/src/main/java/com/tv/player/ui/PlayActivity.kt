@@ -25,6 +25,15 @@ import android.os.PowerManager
 import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
+import android.animation.ValueAnimator
+import android.transition.ChangeBounds
+import android.transition.Fade
+import android.transition.TransitionManager
+import android.transition.TransitionSet
+import android.view.animation.DecelerateInterpolator
+import android.widget.ProgressBar
+import androidx.constraintlayout.widget.ConstraintLayout
+import androidx.constraintlayout.widget.ConstraintSet
 import android.util.Rational
 import android.view.GestureDetector
 import android.view.Gravity
@@ -43,6 +52,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
+import androidx.core.animation.doOnCancel
+import androidx.core.animation.doOnEnd
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -59,12 +70,20 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.preload.DefaultPreloadManager
+import androidx.media3.exoplayer.source.preload.PreloadException
+import androidx.media3.exoplayer.source.preload.PreloadManagerListener
+import androidx.media3.exoplayer.source.preload.TargetPreloadStatusControl
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
@@ -90,6 +109,9 @@ import com.tv.player.core.Library
 import com.tv.player.core.Quark
 import com.tv.player.core.QuarkWeb
 import com.tv.player.core.Resolve
+import com.tv.player.core.CachePolicy
+import com.tv.player.core.PlayCache
+import com.tv.player.core.StallPolicy
 import com.tv.player.core.Store
 import com.tv.player.core.Subtitles
 import com.tv.player.core.Tracker
@@ -126,6 +148,8 @@ class PlayActivity : BaseActivity() {
         private const val MAX_SKIP = 300
         private const val EP_GROUP = 30
         private const val RESCUE_MS = 4_000L
+        private const val PRELOAD_AFTER_MS = 2_500L // how long an episode plays before its neighbours are loaded ahead
+        private const val PRELOAD_MS = 5_000L // how much of the next episode is loaded ahead
         private const val BACKGROUND_PROBE_MS = 10_000L
         private const val QUICK_MS = 6 * 3600_000L
         private const val MAX_SHOWS = 200 // programmes listed for replay
@@ -236,6 +260,28 @@ class PlayActivity : BaseActivity() {
     private var replayMode = false // a past programme is playing in place of the live picture; "回到直播" leaves it
     private var outroDone = false
     private var speedBoost = false
+
+    // Stalls in this viewing: the more there were, the longer playback gathers buffer before resuming (see StallPolicy).
+    private val stallPolicy = StallPolicy()
+    private var stalledThisEpisode = false
+    private var lastSeekAt = 0L
+
+    /** Something other than the network is about to make the player buffer (a seek, a track change): not a stall. */
+    private fun noteDisturbance() {
+        lastSeekAt = SystemClock.elapsedRealtime()
+    }
+
+    // Next-episode preloading (on demand video only).
+    private class Preloaded(val src: Int, val line: Int, val stream: String, val subtitle: android.net.Uri?, val item: MediaItem)
+
+    private var preloadManager: DefaultPreloadManager? = null
+    private var controlPlayer: Player? = null // what the picture's controller drives: the player, with episodes for next / previous
+    private var preloadEpisodes: Set<Int> = emptySet() // the episodes the manager is asked to load ahead
+    private val preloaded = HashMap<Int, Preloaded>() // by episode number, not yet taken by the player
+    private val retired = ArrayList<MediaItem>() // taken by the player: let go of them once it has moved on
+    private var playingPreload: MediaItem? = null
+    private var preloadJob: Job? = null
+    private val preloadNext = Runnable { preloadNextEpisode() }
     private var sleepAtMs = 0L // SystemClock.elapsedRealtime() deadline; 0 = off
     private var sleepAfterEp = false
     private var sleepChoice = 0
@@ -289,7 +335,6 @@ class PlayActivity : BaseActivity() {
      * the stacked phone layout.
      */
     private fun playLayout() = when {
-        vfullShown -> R.layout.activity_play_vfull
         isTv && !isLive && !tvFull -> R.layout.activity_play_tvdetail
         isTv -> R.layout.activity_play_overlay
         isTablet() && resources.configuration.screenWidthDp >= 720 -> R.layout.activity_play_tv
@@ -348,26 +393,68 @@ class PlayActivity : BaseActivity() {
             override fun getMinimumLoadableRetryCount(dataType: Int) = 1
         }
         // Start after 1 s of video instead of the default 2.5 s; the rest keeps buffering while it plays.
-        val loadControl = DefaultLoadControl.Builder().setBufferDurationsMs(15_000, 50_000, 1_000, 2_000).build()
-        player = ExoPlayer.Builder(this)
+        val loadControl = StallAwareLoadControl(
+            DefaultLoadControl.Builder().setBufferDurationsMs(15_000, 50_000, 1_000, 2_000).build(),
+            stallPolicy,
+        )
+        // Drive addresses (web login) need the session cookies on every request to the drive's hosts.
+        val network = ResolvingDataSource.Factory(DefaultDataSource.Factory(this, httpFactory)) { spec ->
+            val extra = spec.uri.host?.let(QuarkWeb::headersFor)
+            if (extra == null) spec else spec.withRequestHeaders(spec.httpRequestHeaders + extra)
+        }
+        // On-demand video is cached on disk as it plays (and as the next episode is loaded ahead); live is not, and neither
+        // are a drive's files: their addresses expire and need the login.
+        // A drive's files (either kind of login) are left alone as a whole: one film would fill the cache on its own.
+        val fromDrive = !isLive && items.any { it.sourceKey == Quark.SOURCE_KEY || it.sourceKey == QuarkWeb.SOURCE_KEY }
+        val dataSource: DataSource.Factory = if (isLive || fromDrive) network else RoutingDataSource.Factory(
+            direct = network,
+            cached = CacheDataSource.Factory()
+                .setCache(PlayCache.get(this))
+                .setUpstreamDataSourceFactory(network)
+                .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR), // a cache that fails must not fail the playback
+            bypass = { uri -> !CachePolicy.cacheable(uri.scheme, uri.path) || uri.host?.let(QuarkWeb::headersFor) != null },
+        )
+        val mediaSourceFactory = DefaultMediaSourceFactory(dataSource).setLoadErrorHandlingPolicy(failFast)
+        // The player is built by the preload manager's builder so both share one pipeline: what the manager loads ahead
+        // of the next episode (its address, its playlist, the first seconds) is what the player then plays.
+        val preloadBuilder = DefaultPreloadManager.Builder(
+            this,
+            TargetPreloadStatusControl<Int> { episode ->
+                if (episode in preloadEpisodes) DefaultPreloadManager.Status(DefaultPreloadManager.Status.STAGE_LOADED_FOR_DURATION_MS, PRELOAD_MS) else null
+            },
+        )
+            .setMediaSourceFactory(mediaSourceFactory)
             .setLoadControl(loadControl)
-            .setMediaSourceFactory(
-                // Drive addresses (web login) need the session cookies on every request to the drive's hosts.
-                DefaultMediaSourceFactory(
-                    ResolvingDataSource.Factory(DefaultDataSource.Factory(this, httpFactory)) { spec ->
-                        val extra = spec.uri.host?.let(QuarkWeb::headersFor)
-                        if (extra == null) spec else spec.withRequestHeaders(spec.httpRequestHeaders + extra)
-                    },
-                ).setLoadErrorHandlingPolicy(failFast),
+            // A phone whose preferred video decoder fails to start falls back to another one instead of failing the line.
+            .setRenderersFactory(DefaultRenderersFactory(this).setEnableDecoderFallback(true))
+        player = preloadBuilder
+            .buildExoPlayer(
+                ExoPlayer.Builder(this)
+                    .setAudioAttributes(AudioAttributes.DEFAULT, true)
+                    .setHandleAudioBecomingNoisy(true)
+                    // The controller's back / forward buttons: 10 s each way, like the remote's keys and the swipe (not 5 and 15).
+                    .setSeekBackIncrementMs(10_000)
+                    .setSeekForwardIncrementMs(10_000),
             )
-            .setAudioAttributes(AudioAttributes.DEFAULT, true)
-            .setHandleAudioBecomingNoisy(true)
-            .build()
             .also {
                 it.addListener(listener)
                 it.playWhenReady = true
                 it.setPlaybackSpeed(if (isLive) 1f else Store.playSpeed())
+                it.setSeekParameters(SeekParameters.CLOSEST_SYNC) // swipe and arrow seeks land on the nearest keyframe: much quicker
             }
+        controlPlayer = EpisodePlayer(player!!, ::canStepEpisode, ::stepEpisode)
+        preloadManager = preloadBuilder.build().also { manager ->
+            // A source whose preload failed (a hiccup on the playlist, a timeout) must not be handed to the player later
+            // as if it were good: it goes, and the episode is then started the normal way.
+            manager.addListener(object : PreloadManagerListener {
+                override fun onError(error: PreloadException) {
+                    handler.post {
+                        preloaded.entries.removeAll { it.value.item == error.mediaItem }
+                        if (error.mediaItem != playingPreload) manager.remove(error.mediaItem)
+                    }
+                }
+            })
+        }
 
         setContentView(playLayout())
         bindViews()
@@ -407,6 +494,7 @@ class PlayActivity : BaseActivity() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         if (landscape && !isInPictureInPictureMode) portraitFull = false // turned sideways: the landscape picture takes over
+        abandonPull()
         detachViews()
         setContentView(playLayout())
         bindViews()
@@ -421,11 +509,21 @@ class PlayActivity : BaseActivity() {
         playerView = findViewById(R.id.player)
         // The listener first: attaching the player may show the controller right away (paused, ended) and that must be seen.
         controllerShown = false
-        playerView.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { controllerShown = it == View.VISIBLE })
-        playerView.player = player
+        playerView.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener {
+            controllerShown = it == View.VISIBLE
+            syncThinProgress()
+        })
+        playerView.player = controlPlayer ?: player
+        // The controller's own gear opens the same panel as the app's: one place for speed, picture, subtitles and the rest.
+        playerView.findViewById<View?>(androidx.media3.ui.R.id.exo_settings)?.setOnClickListener { showPlaySettings() }
         playerView.resizeMode = resizeModeOf(Store.resizeMode())
         findViewById<TextView?>(R.id.title)?.text = title
         findViewById<View?>(R.id.back)?.setOnClickListener { onBackPressedDispatcher.onBackPressed() }
+        // The tall full screen's own buttons: that layer is part of this layout and fades in as the picture grows.
+        findViewById<View?>(R.id.vBack)?.setOnClickListener { onBackPressedDispatcher.onBackPressed() }
+        findViewById<View?>(R.id.vSettings)?.setOnClickListener { showPlaySettings() }
+        findViewById<View?>(R.id.vCast)?.setOnClickListener { showCast() }
+        findViewById<View?>(R.id.vEpisodes)?.setOnClickListener { showEpisodes() }
         panel = findViewById(R.id.panel)
         progressText = findViewById(R.id.progressText)
         findViewById<View?>(R.id.fullscreen)?.setOnClickListener { setTvFull(true) }
@@ -451,7 +549,6 @@ class PlayActivity : BaseActivity() {
         linesView = findViewById<RecyclerView?>(R.id.lines)?.also { it.adapter = lineAdapter }
         findViewById<RecyclerView?>(R.id.epGroups)?.adapter = groupAdapter
         findViewById<View?>(R.id.desc)?.setOnClickListener { showSynopsis() }
-        findViewById<View?>(R.id.episodesBtn)?.setOnClickListener { showEpisodes() }
         episodesView = findViewById<RecyclerView?>(R.id.episodes)?.also {
             // TV bar: one row that scrolls sideways, so the bar stays low; elsewhere a grid.
             it.layoutManager = if (isTv) LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
@@ -476,14 +573,19 @@ class PlayActivity : BaseActivity() {
             }
         }
         playerView.setFullscreenButtonState(if (panel != null) panel?.visibility == View.GONE else landscape || vfullShown)
-        findViewById<View?>(R.id.vroot)?.let { root ->
+        findViewById<View?>(R.id.vOverlay)?.let { layer ->
             // Under the camera cut-out and the bars that swipe back in, the buttons must stay reachable.
-            ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
+            ViewCompat.setOnApplyWindowInsetsListener(layer) { v, insets ->
                 val i = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
                 v.setPadding(i.left, i.top, i.right, i.bottom)
                 insets
             }
-            ViewCompat.requestApplyInsets(root)
+            ViewCompat.requestApplyInsets(layer)
+        }
+        // A layout that was rebuilt while the tall full screen is on (turned back from sideways) goes straight to it.
+        if (vfullShown) applyPortraitFull(animate = false) else {
+            updateOverlayTitle()
+            syncPullArrow()
         }
         setupGestures()
         if (overlay) {
@@ -520,20 +622,194 @@ class PlayActivity : BaseActivity() {
         }
     }
 
+    // ---- pulling the small picture down into the full screen (follows the finger, like Bilibili) -------------------------
+
+    /** How the picture has to be scaled and moved to become the full-screen picture, and how far a finger must go for that. */
+    private class Pull(val scale: Float, val dy: Float, val range: Float)
+
+    private var pull: Pull? = null
+    private var pullT = 0f
+    private var pullAnimator: ValueAnimator? = null
+
+    /** Takes hold of the small picture for a pull; false when it cannot be worked out (then the drag is a volume swipe). */
+    private fun beginPull(): Boolean {
+        if (pull != null) return false // the last one is still settling
+        val root = findViewById<ConstraintLayout?>(R.id.root) ?: return false
+        val size = player?.videoSize ?: return false
+        if (size.width <= 0 || size.height <= 0 || playerView.height <= 0 || root.height <= 0) return false
+        val aspect = size.width * size.pixelWidthHeightRatio / size.height
+        val boxH = playerView.height.toFloat()
+        val shownH = minOf(boxH, playerView.width / aspect) // the picture as it is now: fitted into its 16:9 box
+        val fullW = minOf(root.width.toFloat(), root.height * aspect) // and as it will be: fitted into the whole screen
+        val scale = (fullW / aspect) / shownH
+        val dy = root.height / 2f - (playerView.top + boxH / 2f)
+        pull = Pull(scale, dy, root.height * 0.3f)
+        pullT = 0f
+        playerView.hideController()
+        playerView.translationZ = dp(8).toFloat() // above the lists, which are drawn after it
+        root.setBackgroundColor(Color.BLACK)
+        return true
+    }
+
+    private fun setPull(t: Float) {
+        val g = pull ?: return
+        pullT = t
+        val s = 1f + (g.scale - 1f) * t
+        playerView.scaleX = s
+        playerView.scaleY = s
+        playerView.translationY = g.dy * t
+        findViewById<View?>(R.id.topbar)?.alpha = 1f - t
+        findViewById<View?>(R.id.content)?.alpha = 1f - t
+        findViewById<View?>(R.id.pullArrow)?.apply {
+            translationY = t * dp(56)
+            alpha = 0.85f * (1f - t)
+        }
+    }
+
+    /** Letting go: past a third of the way it goes on to the full screen, short of that it springs back. */
+    private fun endPull(up: Boolean) {
+        if (pull == null) return
+        val commit = up && pullT >= 0.3f
+        val from = pullT
+        val to = if (commit) 1f else 0f
+        pullAnimator?.cancel()
+        var cancelled = false
+        pullAnimator = ValueAnimator.ofFloat(from, to).apply {
+            duration = 160L + (180 * abs(to - from)).toLong()
+            interpolator = DecelerateInterpolator()
+            addUpdateListener { setPull(it.animatedValue as Float) }
+            doOnCancel { cancelled = true }
+            doOnEnd { if (!cancelled) finishPull(commit) }
+            start()
+        }
+    }
+
+    /** The page is being rebuilt or left in the middle of a pull: nothing is finished on the old views, the pull just ends. */
+    private fun abandonPull() {
+        pullAnimator?.removeAllListeners()
+        pullAnimator?.cancel()
+        pullAnimator = null
+        pull = null
+    }
+
+    /** The pull is over: the picture is back at rest, and if it was taken all the way the page really is the full screen. */
+    private fun finishPull(commit: Boolean) {
+        playerView.scaleX = 1f
+        playerView.scaleY = 1f
+        playerView.translationY = 0f
+        playerView.translationZ = 0f
+        findViewById<View?>(R.id.topbar)?.alpha = 1f
+        findViewById<View?>(R.id.content)?.alpha = 1f
+        findViewById<View?>(R.id.pullArrow)?.apply {
+            translationY = 0f
+            alpha = 0.85f
+        }
+        pull = null
+        pullAnimator = null
+        if (commit && portraitVideo && canPortraitFull) {
+            portraitFull = true
+            applyPortraitFull(animate = false)
+            applySystemBars()
+            findViewById<View?>(R.id.vOverlay)?.apply {
+                alpha = 0f
+                animate().alpha(1f).setDuration(180).start()
+            }
+            playerView.showController()
+            val episodes = details[curSrc]?.lines?.getOrNull(curLine)?.episodes?.size ?: 0
+            if (episodes > 1 && Store.swipeTips() < 3) {
+                Store.bumpSwipeTips()
+                flashHud("上滑下一集，下滑上一集", 2_500)
+            }
+        } else {
+            findViewById<ConstraintLayout?>(R.id.root)?.setBackgroundColor(getColor(R.color.bg))
+        }
+    }
+
+    /** The arrow under a tall picture: there to say it can be pulled down; gone elsewhere (and then it takes no room). */
+    private fun syncPullArrow() {
+        findViewById<View?>(R.id.pullArrow)?.visibility = if (portraitVideo && canPortraitFull && !vfullShown) View.VISIBLE else View.GONE
+    }
+
+    /** The root's padding for the status bar, kept while the full screen has taken it away. */
+    private var pagePadding: IntArray? = null
+
+    /**
+     * Puts the page into (or back out of) the tall full screen in place: the same picture view grows from its 16:9 box to the
+     * whole screen while the top bar and the lists fade out and the full-screen layer fades in (and the other way round on
+     * the way back). It is not a new layout, so the picture is never torn down: no black flash, and the move can be animated.
+     */
+    private fun applyPortraitFull(animate: Boolean) {
+        val root = findViewById<ConstraintLayout?>(R.id.root) ?: return
+        val full = vfullShown
+        val set = ConstraintSet().apply { clone(this@PlayActivity, R.layout.activity_play) }
+        if (full) {
+            set.setDimensionRatio(R.id.player, null)
+            set.connect(R.id.player, ConstraintSet.TOP, ConstraintSet.PARENT_ID, ConstraintSet.TOP)
+            set.connect(R.id.player, ConstraintSet.BOTTOM, ConstraintSet.PARENT_ID, ConstraintSet.BOTTOM)
+            set.setVisibility(R.id.topbar, View.GONE)
+            set.setVisibility(R.id.content, View.GONE)
+            set.setVisibility(R.id.vOverlay, View.VISIBLE)
+            if (pagePadding == null) pagePadding = intArrayOf(root.paddingLeft, root.paddingTop, root.paddingRight, root.paddingBottom)
+        }
+        if (animate) {
+            TransitionManager.beginDelayedTransition(
+                root,
+                TransitionSet().addTransition(ChangeBounds()).addTransition(Fade()).setDuration(280).setInterpolator(DecelerateInterpolator()),
+            )
+        }
+        set.applyTo(root)
+        // The status bar's room goes with the bars in the same layout pass, so it moves with the picture, not after it.
+        if (full) {
+            root.fitsSystemWindows = false
+            root.setPadding(0, 0, 0, 0)
+        } else {
+            pagePadding?.let { root.setPadding(it[0], it[1], it[2], it[3]) }
+            pagePadding = null
+            root.fitsSystemWindows = true
+            root.requestApplyInsets()
+        }
+        root.setBackgroundColor(if (full) Color.BLACK else getColor(R.color.bg))
+        playerView.setFullscreenButtonState(full)
+        updateOverlayTitle()
+        syncThinProgress()
+        syncPullArrow()
+        if (animate && full) playerView.showController() // so the way out (and the time bar) is in view on arrival
+    }
+
+    /** The full-screen title says which episode this is; the episode button is there only when there is more than one. */
+    private fun updateOverlayTitle() {
+        val episodes = details[curSrc]?.lines?.getOrNull(curLine)?.episodes?.size ?: 0
+        findViewById<TextView?>(R.id.vTitle)?.text = if (episodes > 1) "$title · ${epName()}" else title
+        findViewById<View?>(R.id.vEpisodes)?.visibility = if (episodes > 1) View.VISIBLE else View.GONE
+    }
+
+    /** The hairline at the bottom of the tall full screen shows how far along the episode is while the controls are away. */
+    private fun syncThinProgress() {
+        val bar = findViewById<ProgressBar?>(R.id.vProgress) ?: return
+        bar.visibility = if (controllerShown) View.INVISIBLE else View.VISIBLE
+        val p = player ?: return
+        if (p.duration > 0) bar.progress = (p.currentPosition * 1000 / p.duration).toInt().coerceIn(0, 1000)
+    }
+
+    /** Whether the previous (-1) or next (1) episode exists, for the controller's own buttons. */
+    private fun canStepEpisode(step: Int): Boolean {
+        if (isLive || replayMode) return false
+        val count = details[curSrc]?.lines?.getOrNull(curLine)?.episodes?.size ?: return false
+        return curEp + step in 0 until count
+    }
+
     /** Phones: switch between the small picture and the tall picture over the whole screen; playback carries on. */
     private fun setPortraitFull(full: Boolean) {
         if (portraitFull == full) return
         if (full && !(portraitVideo && canPortraitFull)) return
         portraitFull = full
-        detachViews()
-        setContentView(playLayout())
-        bindViews()
-        refreshLists()
-        updateFavorite()
-        setInfo(infoText)
+        applyPortraitFull(animate = true)
         applySystemBars()
-        // A new picture view has never shown its controller, and then its first tap would "hide" it instead of showing it.
-        if (full) playerView.showController()
+        val episodes = details[curSrc]?.lines?.getOrNull(curLine)?.episodes?.size ?: 0
+        if (full && episodes > 1 && Store.swipeTips() < 3) {
+            Store.bumpSwipeTips()
+            flashHud("上滑下一集，下滑上一集", 2_500)
+        }
     }
 
     /** The details page text: score, year / category / area / status, people, synopsis; the blurred backdrop. */
@@ -602,11 +878,26 @@ class PlayActivity : BaseActivity() {
     // ---- playback ------------------------------------------------------------------------------------------------
 
     private val listener = object : Player.Listener {
+        override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+            if (reason == Player.DISCONTINUITY_REASON_SEEK || reason == Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT) noteDisturbance()
+        }
+
         override fun onPlaybackStateChanged(state: Int) {
             updateKeepScreen()
+            // Buffering in the middle of playing, not after a seek or at the start, is a stall.
+            if (state == Player.STATE_BUFFERING && started && !isLive && player?.playWhenReady == true && SystemClock.elapsedRealtime() - lastSeekAt > 1_500) {
+                stallPolicy.onStall()
+                stalledThisEpisode = true
+                Log.d("TVP", "stall ${stallPolicy.stalls}: ${stallPolicy.resumeMs()} ms are buffered before playing on")
+            }
             when (state) {
                 Player.STATE_READY -> {
                     if (!started) Log.d("TVP", "ready on ${current?.label}")
+                    // A few seconds into the episode, once it plays steadily, the next one is loaded ahead.
+                    if (!isLive && !replayMode) {
+                        handler.removeCallbacks(preloadNext)
+                        handler.postDelayed(preloadNext, PRELOAD_AFTER_MS)
+                    }
                     handler.removeCallbacks(rescue)
                     // Speed tests still running would only take bandwidth from the line that just started.
                     probeJobs.forEach { it.cancel() }
@@ -631,6 +922,7 @@ class PlayActivity : BaseActivity() {
                     setInfo(playingText())
                 }
                 Player.STATE_ENDED -> if (replayMode) setInfo("回看已播完，可以换一段，或点「回到直播」") else if (!isLive) {
+                    if (!stalledThisEpisode) stallPolicy.onSmoothEpisode() // played through without a stall: ease off
                     if (sleepAfterEp) {
                         sleepNow("这一集播完了，已按睡眠定时停止")
                         return
@@ -644,6 +936,7 @@ class PlayActivity : BaseActivity() {
         override fun onVideoSizeChanged(videoSize: VideoSize) {
             if (videoSize.height <= 0) return
             portraitVideo = videoSize.width * videoSize.pixelWidthHeightRatio < videoSize.height
+            syncPullArrow()
             if (!portraitVideo && portraitFull) setPortraitFull(false)
             if (portraitVideo && canPortraitFull && !portraitFull && !vfullTipShown && Store.vfullTips() < 3) {
                 vfullTipShown = true
@@ -769,6 +1062,11 @@ class PlayActivity : BaseActivity() {
     /** Picks the next untried line/source and starts it. */
     private fun attempt() {
         playJob?.cancel()
+        // The episode that is starting needs the bandwidth more than the ones after it: what is still being resolved is
+        // dropped. What the manager has loaded is kept (an invalidate here would empty the very source about to be played).
+        preloadJob?.cancel()
+        handler.removeCallbacks(preloadNext)
+        stalledThisEpisode = false
         handler.removeCallbacks(stall)
         player?.stop()
         started = false
@@ -798,9 +1096,20 @@ class PlayActivity : BaseActivity() {
                 current = cand
                 resolvedUrl = stream
                 val media = mediaFor(stream)
+                // The same address was loaded ahead (the manager already has its playlist and first seconds): play that
+                // source. It is used once: after a failure the retry builds a fresh one.
+                val ahead = if (isLive) null else preloaded[curEp]?.takeIf { it.stream == stream && it.subtitle == extSubtitle }
+                val source = ahead?.let { preloadManager?.getMediaSource(it.item) }
+                if (!isLive) Log.d("TVP", "episode ${curEp + 1}: preload ${if (source != null) "hit" else "miss"}")
+                if (ahead != null) {
+                    preloaded.remove(curEp)
+                    if (source != null) retired += ahead.item
+                }
+                playingPreload = if (source != null) ahead?.item else null
                 player?.apply {
                     // TIME_UNSET lets live streams start at the live edge instead of the oldest segment.
-                    setMediaItem(media, if (pendingStart > 0) pendingStart else C.TIME_UNSET)
+                    val at = if (pendingStart > 0) pendingStart else C.TIME_UNSET
+                    if (source != null) setMediaSource(source, at) else setMediaItem(media, at)
                     prepare()
                     play()
                 }
@@ -1099,11 +1408,10 @@ class PlayActivity : BaseActivity() {
             if (live) selectLine(index) else refs.getOrNull(index)?.let { (s, li) -> pickVodLine(s, li) }
         }
         chips.submit(lineLabels, lineSelected)
-        val grid = RecyclerView(this).apply {
+        val grid = BoundedRecyclerView(this, panelListHeight()).apply {
             layoutManager = GridLayoutManager(this@PlayActivity, 3)
             adapter = chips
             clipToPadding = false
-            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(360))
             setPadding(dp(16), dp(8), dp(16), dp(8))
         }
         val dialog = MaterialAlertDialogBuilder(this)
@@ -1115,6 +1423,77 @@ class PlayActivity : BaseActivity() {
         RemoteControl.cover(dialog)
     }
 
+    /**
+     * Loads the neighbours of the episode on screen ahead: the next one first, then the previous one (a swipe back) and the
+     * one after the next (two quick swipes). Each one's stream address is worked out now and the preload manager fetches its
+     * playlist and the first seconds, so that switching to it (autoplay, a swipe, the episode list) does not wait for any of
+     * that. It costs little, five seconds of each, loaded once the current one plays steadily, so it is done on mobile data
+     * too (unlike the line speed tests, which download megabytes). Not for drive files: their addresses expire.
+     */
+    private fun preloadNextEpisode() {
+        val manager = preloadManager ?: return
+        if (isLive || replayMode || isFinishing || allFailed) return
+        val episodes = details[curSrc]?.lines?.getOrNull(curLine)?.episodes ?: return
+        // On a line that has been stalling, loading ahead would only take bandwidth from the picture: the next episode only,
+        // and nothing at all after a few stalls.
+        val wanted = when {
+            stallPolicy.stalls == 0 -> listOf(curEp + 1, curEp - 1, curEp + 2)
+            stallPolicy.stalls <= 2 -> listOf(curEp + 1)
+            else -> emptyList()
+        }
+        val targets = wanted.filter { it in episodes.indices }
+            .filter { !QuarkWeb.isLink(episodes[it].url) && !Quark.isLink(episodes[it].url) }
+        // Whatever was loaded for other episodes or other lines (the viewer jumped, or changed line) is let go of, and so are
+        // sources the player has finished with; what the player is using now stays.
+        preloaded.entries.filter { it.key !in targets || it.value.src != curSrc || it.value.line != curLine }.forEach {
+            preloaded.remove(it.key)
+            if (it.value.item !== playingPreload) manager.remove(it.value.item)
+        }
+        retired.filter { it !== playingPreload }.forEach { manager.remove(it); retired.remove(it) }
+        preloadEpisodes = targets.toSet()
+        manager.setCurrentPlayingIndex(curEp)
+        manager.invalidate() // what is already added goes on loading (or stops, if its episode is no longer wanted)
+        val missing = targets.filter { !preloaded.containsKey(it) }
+        if (missing.isEmpty()) return
+        val src = curSrc
+        val line = curLine
+        val now = curEp
+        preloadJob?.cancel()
+        preloadJob = lifecycleScope.launch {
+            for (target in missing) {
+                val stream = Resolve.stream(episodes[target].url) ?: continue
+                if (curEp != now || curSrc != src || curLine != line) return@launch // the viewer moved on while it was resolving
+                val item = mediaFor(stream)
+                // A line that is one file for every episode gives the same address (and so the same item) each time.
+                if (preloaded.any { it.key != target && it.value.item == item }) continue
+                preloaded.remove(target)?.let { manager.remove(it.item) }
+                preloaded[target] = Preloaded(src, line, stream, extSubtitle, item)
+                manager.add(item, target)
+                manager.setCurrentPlayingIndex(now)
+                manager.invalidate()
+                Log.d("TVP", "preloading episode ${target + 1}: $stream")
+            }
+        }
+    }
+
+    /** The tall full screen as a feed of episodes, like a short-video app: up for the next one, down for the previous. */
+    private fun stepEpisode(step: Int) {
+        val count = details[curSrc]?.lines?.getOrNull(curLine)?.episodes?.size ?: 0
+        val target = curEp + step
+        when {
+            count <= 1 -> flashHud("这部只有一集", 1_200)
+            target < 0 -> flashHud("已经是第一集", 1_200)
+            target >= count -> flashHud("已经是最后一集", 1_200)
+            else -> {
+                selectEpisode(target)
+                flashHud(epName(), 1_000)
+            }
+        }
+    }
+
+    /** Room for the list inside the episode / line panels: a share of the screen, so title and buttons always fit around it. */
+    private fun panelListHeight() = (resources.displayMetrics.heightPixels * 0.55f).toInt()
+
     /** The tall full screen has no episode list under the picture: every episode in a panel over it, and the lines one tap away. */
     private fun showEpisodes() {
         val episodes = details[curSrc]?.lines?.getOrNull(curLine)?.episodes ?: return
@@ -1124,11 +1503,10 @@ class PlayActivity : BaseActivity() {
             if (index != curEp) selectEpisode(index)
         }
         chips.submit(episodes.map { Regex("^第0*(\\d+)[集期话]$").find(it.name)?.groupValues?.get(1) ?: it.name }, curEp)
-        val grid = RecyclerView(this).apply {
+        val grid = BoundedRecyclerView(this, panelListHeight()).apply {
             layoutManager = GridLayoutManager(this@PlayActivity, 5)
             adapter = chips
             clipToPadding = false
-            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(320))
             setPadding(dp(16), dp(8), dp(16), dp(8))
             layoutManager?.scrollToPosition(curEp)
         }
@@ -1205,7 +1583,7 @@ class PlayActivity : BaseActivity() {
         val label = { n: String -> if (isTv) Regex("^第0*(\\d+)[集期话]$").find(n)?.groupValues?.get(1) ?: n else n }
         epAdapter.submit(shown.map { label(it.name) }, curEp - epOffset)
         epLabel?.text = "选集（共 ${episodes.size} 集）"
-        findViewById<View?>(R.id.episodesBtn)?.visibility = if (episodes.size > 1) View.VISIBLE else View.GONE
+        updateOverlayTitle()
         episodesView?.scrollToPosition((curEp - epOffset).coerceAtLeast(0))
     }
 
@@ -1274,6 +1652,7 @@ class PlayActivity : BaseActivity() {
                 }
             }
             if (overlay && panel?.visibility == View.VISIBLE) updateProgress()
+            if (vfullShown) syncThinProgress()
             // The programme guide moves on every few minutes.
             if (isLive && started && tick % 30 == 0) setInfo(playingText())
             handler.postDelayed(this, 1_000)
@@ -1414,7 +1793,7 @@ class PlayActivity : BaseActivity() {
         val view = layoutInflater.inflate(R.layout.dialog_play_settings, null)
 
         // speed (on demand only)
-        val speeds = listOf(0.75f, 1f, 1.25f, 1.5f, 2f)
+        val speeds = listOf(0.75f, 1f, 1.25f, 1.5f, 2f, 3f)
         if (isLive) view.findViewById<View>(R.id.speedBox).visibility = View.GONE else {
             val now = player?.playbackParameters?.speed ?: Store.playSpeed()
             fill(view.findViewById(R.id.speedGroup), speeds.map { "${it}×".replace(".0×", "×") }, speeds.indexOfFirst { abs(it - now) < 0.01f }) {
@@ -1625,13 +2004,16 @@ class PlayActivity : BaseActivity() {
         val gone = if (inPip) View.GONE else View.VISIBLE
         for (id in listOf(R.id.topbar, R.id.content, R.id.back, R.id.title, R.id.cast, R.id.playSettings)) findViewById<View?>(id)?.visibility = gone
         // The tall full screen's episode button is shown only when there is more than one episode: refreshLists decides.
-        if (inPip) findViewById<View?>(R.id.episodesBtn)?.visibility = View.GONE else refreshLists()
+        findViewById<View?>(R.id.vOverlay)?.visibility = if (!inPip && vfullShown) View.VISIBLE else View.GONE
+        if (!inPip) refreshLists()
+        syncPullArrow()
         playerView.useController = !inPip
         if (inPip) playerView.hideController()
     }
 
     private fun setVideoEnabled(enabled: Boolean) {
         val p = player ?: return
+        noteDisturbance() // the video renderer restarts, and the player buffers for a moment
         p.trackSelectionParameters = p.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, !enabled).build()
     }
 
@@ -1663,6 +2045,7 @@ class PlayActivity : BaseActivity() {
         val stream = resolvedUrl ?: return
         val p = player ?: return
         val at = if (isLive && !replayMode) C.TIME_UNSET else p.currentPosition
+        noteDisturbance()
         p.setMediaItem(mediaFor(stream), at)
         p.prepare()
     }
@@ -1743,6 +2126,7 @@ class PlayActivity : BaseActivity() {
     /** [option] null means subtitles off. Audio always has a track picked. */
     private fun applyTrack(type: Int, option: TrackOption?) {
         val p = player ?: return
+        noteDisturbance()
         p.trackSelectionParameters = p.trackSelectionParameters.buildUpon().apply {
             when {
                 option != null -> setTrackTypeDisabled(type, false).setOverrideForType(TrackSelectionOverride(option.group.mediaTrackGroup, option.index))
@@ -1997,7 +2381,8 @@ class PlayActivity : BaseActivity() {
         view.overlayFrameLayout?.addView(label, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
         hud = label
 
-        var mode = 0 // 0 undecided, 1 seek, 2 brightness, 3 volume, 4 pulling for / out of full screen, 5 pulled
+        var mode = 0 // 0 undecided, 1 seek, 2 brightness, 3 volume, 4 swiping to another episode, 5 swiped, 6 pulling the picture down
+        var downRawY = 0f
         var startPos = 0L
         var seekTarget = 0L
         var startBrightness = 0f
@@ -2021,8 +2406,9 @@ class PlayActivity : BaseActivity() {
                 override fun onLongPress(e: MotionEvent) {
                     if (isLive && !replayMode) return
                     speedBoost = true
-                    player?.setPlaybackSpeed(2f)
-                    label.text = "2× 倍速"
+                    val boost = maxOf(2f, Store.playSpeed()) // at 3× already, holding must not slow it down
+                    player?.setPlaybackSpeed(boost)
+                    label.text = "${boost}×".replace(".0×", "×") + " 倍速"
                     label.visibility = View.VISIBLE
                 }
 
@@ -2034,10 +2420,14 @@ class PlayActivity : BaseActivity() {
                             if (!canSeek() || p.duration <= 0) return false
                             mode = 1
                             startPos = p.currentPosition
-                        } else if (portraitVideo && (vfullShown || canPortraitFull) && e1.x in view.width * 0.28f..view.width * 0.72f) {
-                            // A tall picture: in the middle a vertical drag is the pull for full screen. The sides (the black
-                            // bars of the small picture) keep brightness on the left and volume on the right.
+                        } else if (portraitVideo && vfullShown && e1.x in view.width * 0.2f..view.width * 0.8f) {
+                            // In the tall full screen, the middle is a feed of episodes; the sides keep brightness (left) and
+                            // volume (right).
                             mode = 4
+                        } else if (portraitVideo && canPortraitFull && !vfullShown && e1.x in view.width * 0.28f..view.width * 0.72f && beginPull()) {
+                            // A tall picture in the small window: a pull down takes hold of it. From here the touch listener
+                            // below follows the finger (with raw coordinates: the picture moves under it) until it lets go.
+                            mode = 6
                         } else if (e1.x < view.width / 2) {
                             mode = 2
                             startBrightness = currentBrightness()
@@ -2047,19 +2437,16 @@ class PlayActivity : BaseActivity() {
                         }
                     }
                     if (mode == 4) {
-                        // Down on the small picture opens the full screen, up on the full screen closes it. Done from the
-                        // handler: the views are replaced, and this touch is still being delivered to the old ones.
+                        // In the full screen it is a feed of episodes: swipe up for the next one, down for the previous.
                         val pulled = e2.y - e1.y
-                        if (!vfullShown && pulled > dp(72)) {
+                        if (abs(pulled) > dp(72)) {
                             mode = 5
-                            handler.post { setPortraitFull(true) }
-                        } else if (vfullShown && pulled < -dp(72)) {
-                            mode = 5
-                            handler.post { setPortraitFull(false) }
+                            val step = if (pulled < 0) 1 else -1
+                            handler.post { stepEpisode(step) }
                         }
                         return true
                     }
-                    if (mode == 5) return true
+                    if (mode == 5 || mode == 6) return true
                     view.hideController()
                     val dx = e2.x - e1.x
                     val up = e1.y - e2.y
@@ -2087,6 +2474,19 @@ class PlayActivity : BaseActivity() {
         )
 
         view.setOnTouchListener { v, event ->
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) downRawY = event.rawY
+            if (mode == 6) {
+                // The picture is being pulled: it follows the finger, grows with it, and on letting go either goes on to the
+                // full screen or springs back.
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_MOVE -> pull?.let { setPull(((event.rawY - downRawY) / it.range).coerceIn(0f, 1f)) }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        mode = 0
+                        endPull(event.actionMasked == MotionEvent.ACTION_UP)
+                    }
+                }
+                return@setOnTouchListener true
+            }
             detector.onTouchEvent(event)
             if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
                 if (mode == 1 && event.actionMasked == MotionEvent.ACTION_UP) player?.seekTo(seekTarget)
@@ -2175,11 +2575,14 @@ class PlayActivity : BaseActivity() {
     }
 
     override fun onDestroy() {
+        abandonPull()
         stopKeepAlive()
         playJob?.cancel()
         handler.removeCallbacksAndMessages(null)
         player?.release()
         player = null
+        preloadManager?.release()
+        preloadManager = null
         super.onDestroy()
     }
 }

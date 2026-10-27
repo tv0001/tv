@@ -167,8 +167,11 @@ object Search {
     }
 }
 
-/** Merges hits from different sources that share a normalized title. */
-class Grouper {
+/**
+ * Merges hits from different sources that share a normalized title. With [dedupe] an entry that is added again (same
+ * source, same id) is kept once; the search page leaves it off and merges exactly as it always did.
+ */
+class Grouper(private val dedupe: Boolean = false) {
     private class Acc(val title: String) {
         val items = ArrayList<VodItem>()
     }
@@ -178,7 +181,9 @@ class Grouper {
     fun add(items: List<VodItem>) {
         for (i in items) {
             val key = Search.normalize(i.title).ifEmpty { i.title }
-            groups.getOrPut(key) { Acc(i.title) }.items += i
+            // With dedupe: the same entry can arrive twice (two keywords of one theme both match its title).
+            val acc = groups.getOrPut(key) { Acc(i.title) }
+            if (!dedupe || acc.items.none { it.sourceKey == i.sourceKey && it.id == i.id }) acc.items += i
         }
     }
 

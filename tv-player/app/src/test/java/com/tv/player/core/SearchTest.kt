@@ -70,6 +70,22 @@ class SearchTest {
     }
 
     @Test
+    fun `the same entry arriving twice counts once`() {
+        // two keywords of one theme both match a title, so one source returns the entry twice
+        val g = Grouper(dedupe = true).also { it.add(listOf(item("重生之回到八零", "a"))); it.add(listOf(item("重生之回到八零", "a"), item("重生之回到八零", "b"))) }
+        val group = g.snapshot("重生").single()
+        assertEquals(2, group.items.size)
+        assertEquals(listOf("a", "b"), group.items.map { it.sourceKey })
+    }
+
+    @Test
+    fun `the search page keeps merging exactly as before`() {
+        // dedupe is off unless asked for: the search page's grouping is not touched by the short-drama tab
+        val g = Grouper().also { it.add(listOf(item("重生之回到八零", "a"))); it.add(listOf(item("重生之回到八零", "a"), item("重生之回到八零", "b"))) }
+        assertEquals(listOf("a", "a", "b"), g.snapshot("重生").single().items.map { it.sourceKey })
+    }
+
+    @Test
     fun `season spelling decides the exact match`() {
         assertEquals("庆余年第2季", ranked("庆余年 第二季", item("庆余年"), item("庆余年第2季")).first())
     }
