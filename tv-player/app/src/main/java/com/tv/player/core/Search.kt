@@ -38,8 +38,11 @@ object SourceHealth {
 }
 
 object Search {
-    /** Queries every source in parallel, each with its own deadline; emits one [Hit] per source as it finishes. */
-    fun all(sources: List<VodSource>, keyword: String, perSourceMs: Long = 10_000): Flow<Hit> = channelFlow {
+    /**
+     * Queries every source in parallel, each with its own deadline; emits one [Hit] per source as it finishes. One user
+     * search counts once towards a source's cool-down: the shorter retry rounds pass [trackHealth] = false.
+     */
+    fun all(sources: List<VodSource>, keyword: String, perSourceMs: Long = 10_000, trackHealth: Boolean = true): Flow<Hit> = channelFlow {
         val succeeded = AtomicInteger()
         val failed = ConcurrentLinkedQueue<String>()
         coroutineScope {
@@ -67,18 +70,100 @@ object Search {
             }
         }
         // If nothing answered, the network is probably down: do not put every source in cool-down for it.
-        if (succeeded.get() > 0) failed.forEach { SourceHealth.fail(it) }
+        if (trackHealth && succeeded.get() > 0) failed.forEach { SourceHealth.fail(it) }
     }
 
+    private val notLetterOrDigit = Regex("[^\\p{L}\\p{N}]")
+    private val quotes = Regex("[《》〈〉「」『』“”\"]")
+    private val spaces = Regex("\\s+")
+
     fun normalize(title: String): String =
-        Normalizer.normalize(title, Normalizer.Form.NFKC).lowercase().replace(Regex("[^\\p{L}\\p{N}]"), "")
+        Normalizer.normalize(title, Normalizer.Form.NFKC).lowercase().replace(notLetterOrDigit, "")
+
+    private val seasonMark = Regex("第([一二两三四五六七八九十]{1,3})([季部集期])")
+
+    /** Reads 一..九十九; null for anything else (百, 千, a digit string like 一二). */
+    private fun chineseNumber(s: String): Int? {
+        fun digit(c: Char) = if (c == '两') 2 else "一二三四五六七八九".indexOf(c).takeIf { it >= 0 }?.plus(1)
+        val ten = s.indexOf('十')
+        return when {
+            ten < 0 -> if (s.length == 1) digit(s[0]) else null
+            ten > 1 || s.length > ten + 2 -> null
+            else -> {
+                val tens = if (ten == 0) 1 else digit(s[0]) ?: return null
+                val ones = if (s.length == ten + 1) 0 else digit(s[ten + 1]) ?: return null
+                tens * 10 + ones
+            }
+        }
+    }
+
+    /** [normalize] with "第二季" read as "第2季", so sources that spell a season differently still match each other. */
+    fun canon(title: String): String =
+        seasonMark.replace(normalize(title)) { m -> chineseNumber(m.groupValues[1])?.let { "第$it${m.groupValues[2]}" } ?: m.value }
+
+    /** What is sent to the sources: 《》 and double quotes dropped, full-width characters made plain, white space collapsed. */
+    fun clean(keyword: String): String {
+        // Full-width letters and digits become plain ones, as do ideographic spaces; punctuation stays as typed, since
+        // a source compares the keyword with its titles letter by letter ("：" is not ":").
+        val plain = StringBuilder(keyword.length)
+        for (c in keyword) plain.append(if (c in '！'..'～' && c.isLetterOrDigit()) (c.code - 0xFEE0).toChar() else if (c == '\u3000') ' ' else c)
+        return plain.toString().replace(quotes, " ").replace(spaces, " ").trim()
+    }
+
+    private val seasonTail = Regex("(?:\\s*第[一二两三四五六七八九十0-9]+[季部集期]|\\s+S\\d{1,2}\\b).*$", RegexOption.IGNORE_CASE)
+    private val fillerTail = Regex("\\s*(?:全集|完整版|高清|超清|蓝光|在线观看|免费观看|免费|国语版?|粤语版?|电视剧|电影|最新)$")
+
+    /**
+     * Shorter queries to fall back on when the whole keyword finds nothing, most specific first (at most three): without
+     * the season and without words like "全集", then the first word, then the first four characters. This is what the
+     * "try fewer words" advice asks the user to do by hand.
+     */
+    fun relaxed(keyword: String, withPrefix: Boolean = true): List<String> {
+        val k = clean(keyword)
+        val out = LinkedHashSet<String>()
+        var base = seasonTail.replace(k, "").trim()
+        while (true) {
+            val next = fillerTail.replace(base, "").trim()
+            if (next == base) break
+            base = next
+        }
+        if (base.isNotEmpty()) out += base
+        // Cutting a Latin title short ("Spider", "The") only finds unrelated ones; this is for Chinese titles.
+        if (base.any { it in '\u4e00'..'\u9fff' }) {
+            base.substringBefore(' ').takeIf { it.length >= 2 }?.let { out += it }
+            val compact = base.replace(" ", "")
+            if (withPrefix && compact.length >= 6) out += compact.take(4)
+        }
+        out.remove(k)
+        return out.take(3)
+    }
 
     /** Some sources ignore the keyword and return their latest items, so keep only titles that really match. */
     fun matches(keyword: String, title: String): Boolean {
-        val k = normalize(keyword)
-        val t = normalize(title)
+        val k = canon(keyword)
+        val t = canon(title)
         if (k.isEmpty()) return true
         return t.contains(k) || (t.length >= 2 && k.contains(t))
+    }
+
+    private val derivative = Regex("解说|花絮|预告|混剪|盘点|解读")
+
+    /** 0 exact title, 1 begins with the keyword, 2 contains it, 3 neither; both sides already through [canon]. */
+    internal fun tierOf(k: String, t: String): Int = when {
+        t == k -> 0
+        t.startsWith(k) -> 1
+        t.contains(k) -> 2
+        else -> 3
+    }
+
+    /**
+     * Smaller is better: exact title, then titles that begin with the keyword, then ones that contain it, then the rest.
+     * With several keywords (what was typed, and the shorter one a retry fell back to) the best of them counts.
+     */
+    internal fun rank(keywords: List<String>, title: String, canonKeywords: List<String> = keywords.map(::canon), canonTitle: String = canon(title)): Int {
+        val tier = canonKeywords.minOf { tierOf(it, canonTitle) }
+        // A recap or trailer of the title is rarely what is wanted, unless a keyword asks for one.
+        return if (derivative.containsMatchIn(title) && keywords.none { derivative.containsMatchIn(it) }) tier + 4 else tier
     }
 }
 
@@ -99,19 +184,32 @@ class Grouper {
 
     val size get() = groups.size
 
-    /** Exact title match first, then titles starting with the keyword, then titles found in more sources. */
-    fun snapshot(keyword: String): List<VodGroup> {
-        val k = Search.normalize(keyword)
+    /** Exact title first, then titles starting with the keyword, then ones containing it; within a tier, found in more sources first, then the closer length. */
+    fun snapshot(keyword: String, alsoLike: List<String> = emptyList(), kind: String = "", year: String = ""): List<VodGroup> {
+        val keywords = listOf(keyword) + alsoLike
+        val canonKeywords = keywords.map(Search::canon)
+        // Each group's rank is worked out once, not on every comparison of the sort. A category that was asked for
+        // ("短剧") puts the titles that have it first; a year only breaks ties among equally good titles. Both are an
+        // order, not a filter, so nothing disappears.
+        class Entry(val group: VodGroup, val rank: Int, val best: Int, val gap: Int, val kindMiss: Int, val yearMiss: Int)
         return groups.entries
             .map { (key, acc) ->
                 val withPic = acc.items.firstOrNull { it.pic.isNotEmpty() }
                 val remarks = acc.items.firstOrNull { it.remarks.isNotEmpty() }?.remarks ?: ""
-                VodGroup(key, acc.title, withPic?.pic ?: "", remarks, acc.items.toList())
+                val group = VodGroup(key, acc.title, withPic?.pic ?: "", remarks, acc.items.toList())
+                val canonTitle = Search.canon(acc.title)
+                // The keyword the title matches best (the one typed, before the ones a retry fell back to, when equal).
+                val best = canonKeywords.indices.minByOrNull { Search.tierOf(canonKeywords[it], canonTitle) }!!
+                Entry(
+                    group,
+                    Search.rank(keywords, acc.title, canonKeywords, canonTitle),
+                    best,
+                    kotlin.math.abs(canonTitle.length - canonKeywords[best].length),
+                    if (kind.isNotEmpty() && acc.items.none { it.kind == kind }) 1 else 0,
+                    if (year.isNotEmpty() && acc.items.none { it.year == year }) 1 else 0,
+                )
             }
-            .sortedWith(
-                compareByDescending<VodGroup> { Search.normalize(it.title) == k }
-                    .thenByDescending { Search.normalize(it.title).startsWith(k) }
-                    .thenByDescending { it.items.size },
-            )
+            .sortedWith(compareBy<Entry> { it.kindMiss }.thenBy { it.rank }.thenBy { it.best }.thenBy { it.yearMiss }.thenByDescending { it.group.items.size }.thenBy { it.gap })
+            .map { it.group }
     }
 }

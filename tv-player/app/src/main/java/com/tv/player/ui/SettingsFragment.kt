@@ -162,6 +162,10 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             Store.setHotMode(if (ids.firstOrNull() == R.id.hotCms) "cms" else "auto")
         }
 
+        val aiSearch = view.findViewById<ChipGroup>(R.id.aiSearch)
+        aiSearch.check(if (Store.aiSearch()) R.id.aiOn else R.id.aiOff)
+        aiSearch.setOnCheckedStateChangeListener { _, ids -> Store.setAiSearch(ids.firstOrNull() == R.id.aiOn) }
+
         val modes = view.findViewById<ChipGroup>(R.id.uiMode)
         modes.check(
             when (Store.uiMode()) {

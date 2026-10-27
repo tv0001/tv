@@ -43,6 +43,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
@@ -288,11 +289,27 @@ class PlayActivity : BaseActivity() {
      * the stacked phone layout.
      */
     private fun playLayout() = when {
+        vfullShown -> R.layout.activity_play_vfull
         isTv && !isLive && !tvFull -> R.layout.activity_play_tvdetail
         isTv -> R.layout.activity_play_overlay
         isTablet() && resources.configuration.screenWidthDp >= 720 -> R.layout.activity_play_tv
         else -> R.layout.activity_play
     }
+
+    /** The phone stack (small picture over the lists); wide tablets have a side panel instead, and TV its own pages. */
+    private val phoneStack get() = !isTv && !(isTablet() && resources.configuration.screenWidthDp >= 720)
+
+    /**
+     * Phones, tall pictures (short dramas): the picture fills the whole screen, like a vertical video in Bilibili. A pull
+     * down on the small picture gets there, a pull up (or back) leaves. [portraitVideo] says the playing picture is tall.
+     */
+    private var portraitFull = false
+    /** From the controller's own visibility callback: isControllerFullyVisible keeps saying true once the controller has timed out. */
+    private var controllerShown = false
+    private var portraitVideo = false
+    private var vfullTipShown = false
+    private val vfullShown get() = portraitFull && phoneStack && !landscape
+    private val canPortraitFull get() = phoneStack && !isLive && !landscape && !isInPictureInPictureMode
 
     /** The TV control bar over the picture (shown on demand, hides by itself). */
     private val overlay get() = isTv && (isLive || tvFull)
@@ -357,7 +374,9 @@ class PlayActivity : BaseActivity() {
         applySystemBars()
 
         onBackPressedDispatcher.addCallback(this) {
-            if (overlay) {
+            if (vfullShown) {
+                setPortraitFull(false)
+            } else if (overlay) {
                 // TV: back first hides the control bar, then returns to the details page (on demand) or leaves.
                 if (panel?.visibility == View.VISIBLE) setPanelVisible(false)
                 else if (!isLive) setTvFull(false)
@@ -387,6 +406,7 @@ class PlayActivity : BaseActivity() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        if (landscape && !isInPictureInPictureMode) portraitFull = false // turned sideways: the landscape picture takes over
         detachViews()
         setContentView(playLayout())
         bindViews()
@@ -399,6 +419,9 @@ class PlayActivity : BaseActivity() {
 
     private fun bindViews() {
         playerView = findViewById(R.id.player)
+        // The listener first: attaching the player may show the controller right away (paused, ended) and that must be seen.
+        controllerShown = false
+        playerView.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { controllerShown = it == View.VISIBLE })
         playerView.player = player
         playerView.resizeMode = resizeModeOf(Store.resizeMode())
         findViewById<TextView?>(R.id.title)?.text = title
@@ -428,6 +451,7 @@ class PlayActivity : BaseActivity() {
         linesView = findViewById<RecyclerView?>(R.id.lines)?.also { it.adapter = lineAdapter }
         findViewById<RecyclerView?>(R.id.epGroups)?.adapter = groupAdapter
         findViewById<View?>(R.id.desc)?.setOnClickListener { showSynopsis() }
+        findViewById<View?>(R.id.episodesBtn)?.setOnClickListener { showEpisodes() }
         episodesView = findViewById<RecyclerView?>(R.id.episodes)?.also {
             // TV bar: one row that scrolls sideways, so the bar stays low; elsewhere a grid.
             it.layoutManager = if (isTv) LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
@@ -442,12 +466,25 @@ class PlayActivity : BaseActivity() {
             if (panel != null) {
                 panel?.visibility = if (full) View.GONE else View.VISIBLE
             } else if (!isTv) {
-                // Phones turn the screen; on TV the picture goes full screen inside the app (setTvFull) and the orientation stays.
-                requestedOrientation =
-                    if (full) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                if (!isLive && (portraitVideo || portraitFull) && !landscape) {
+                    setPortraitFull(full) // a tall picture fills the screen as it is; turning the phone sideways would only shrink it
+                } else {
+                    // Phones turn the screen; on TV the picture goes full screen inside the app (setTvFull) and the orientation stays.
+                    requestedOrientation =
+                        if (full) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                }
             }
         }
-        playerView.setFullscreenButtonState(if (panel != null) panel?.visibility == View.GONE else landscape)
+        playerView.setFullscreenButtonState(if (panel != null) panel?.visibility == View.GONE else landscape || vfullShown)
+        findViewById<View?>(R.id.vroot)?.let { root ->
+            // Under the camera cut-out and the bars that swipe back in, the buttons must stay reachable.
+            ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
+                val i = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+                v.setPadding(i.left, i.top, i.right, i.bottom)
+                insets
+            }
+            ViewCompat.requestApplyInsets(root)
+        }
         setupGestures()
         if (overlay) {
             updatePlayPause()
@@ -481,6 +518,22 @@ class PlayActivity : BaseActivity() {
             setPanelVisible(false)
             flashHud("$title  ${epName()}", 1_500)
         }
+    }
+
+    /** Phones: switch between the small picture and the tall picture over the whole screen; playback carries on. */
+    private fun setPortraitFull(full: Boolean) {
+        if (portraitFull == full) return
+        if (full && !(portraitVideo && canPortraitFull)) return
+        portraitFull = full
+        detachViews()
+        setContentView(playLayout())
+        bindViews()
+        refreshLists()
+        updateFavorite()
+        setInfo(infoText)
+        applySystemBars()
+        // A new picture view has never shown its controller, and then its first tap would "hide" it instead of showing it.
+        if (full) playerView.showController()
     }
 
     /** The details page text: score, year / category / area / status, people, synopsis; the blurred backdrop. */
@@ -538,7 +591,7 @@ class PlayActivity : BaseActivity() {
     private fun applySystemBars() {
         val controller = WindowCompat.getInsetsController(window, window.decorView)
         // The full-screen layouts (phone landscape, TV) hide the system bars; the picture + side panel layout keeps them.
-        if ((landscape && panel == null) || isTv) {
+        if ((landscape && panel == null) || isTv || vfullShown) {
             controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             controller.hide(WindowInsetsCompat.Type.systemBars())
         } else {
@@ -590,6 +643,13 @@ class PlayActivity : BaseActivity() {
 
         override fun onVideoSizeChanged(videoSize: VideoSize) {
             if (videoSize.height <= 0) return
+            portraitVideo = videoSize.width * videoSize.pixelWidthHeightRatio < videoSize.height
+            if (!portraitVideo && portraitFull) setPortraitFull(false)
+            if (portraitVideo && canPortraitFull && !portraitFull && !vfullTipShown && Store.vfullTips() < 3) {
+                vfullTipShown = true
+                Store.bumpVfullTips()
+                flashHud("下拉画面，竖屏全屏", 2_500)
+            }
             resolution = qualityLabel(videoSize.height)
             if (!replayMode) lineQuality[lineKey()] = resolution // a replayed programme's picture is not a line's quality
             if (player?.playbackState == Player.STATE_READY) setInfo(playingText())
@@ -726,6 +786,7 @@ class PlayActivity : BaseActivity() {
                 if (cand == null) {
                     player?.stop()
                     allFailed = true
+                    if (portraitFull) setPortraitFull(false) // the message is on the page behind
                     updateKeepScreen()
                     setInfo(if (QuarkWeb.expired && items.any { it.sourceKey == QuarkWeb.SOURCE_KEY }) "夸克网盘的网页版登录已失效，请到设置里重新扫码登录" else "所有线路都试过了，没有能播放的。点这里重试，或换一部")
                     return@launch
@@ -1054,6 +1115,33 @@ class PlayActivity : BaseActivity() {
         RemoteControl.cover(dialog)
     }
 
+    /** The tall full screen has no episode list under the picture: every episode in a panel over it, and the lines one tap away. */
+    private fun showEpisodes() {
+        val episodes = details[curSrc]?.lines?.getOrNull(curLine)?.episodes ?: return
+        var panel: androidx.appcompat.app.AlertDialog? = null
+        val chips = ChipAdapter(fill = true) { index ->
+            panel?.dismiss()
+            if (index != curEp) selectEpisode(index)
+        }
+        chips.submit(episodes.map { Regex("^第0*(\\d+)[集期话]$").find(it.name)?.groupValues?.get(1) ?: it.name }, curEp)
+        val grid = RecyclerView(this).apply {
+            layoutManager = GridLayoutManager(this@PlayActivity, 5)
+            adapter = chips
+            clipToPadding = false
+            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(320))
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+            layoutManager?.scrollToPosition(curEp)
+        }
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle("选集（共 ${episodes.size} 集）")
+            .setView(grid)
+            .setNeutralButton("线路") { _, _ -> showAllLines() }
+            .setNegativeButton("关闭", null)
+            .show()
+        panel = dialog
+        RemoteControl.cover(dialog)
+    }
+
     /** Plays one line of one source, from the all-lines panel. */
     private fun pickVodLine(s: Int, li: Int) {
         val d = details[s] ?: return
@@ -1117,6 +1205,7 @@ class PlayActivity : BaseActivity() {
         val label = { n: String -> if (isTv) Regex("^第0*(\\d+)[集期话]$").find(n)?.groupValues?.get(1) ?: n else n }
         epAdapter.submit(shown.map { label(it.name) }, curEp - epOffset)
         epLabel?.text = "选集（共 ${episodes.size} 集）"
+        findViewById<View?>(R.id.episodesBtn)?.visibility = if (episodes.size > 1) View.VISIBLE else View.GONE
         episodesView?.scrollToPosition((curEp - epOffset).coerceAtLeast(0))
     }
 
@@ -1534,7 +1623,9 @@ class PlayActivity : BaseActivity() {
     /** In the small floating window only the picture is left. */
     private fun applyPip(inPip: Boolean) {
         val gone = if (inPip) View.GONE else View.VISIBLE
-        for (id in listOf(R.id.topbar, R.id.content, R.id.back, R.id.cast, R.id.playSettings)) findViewById<View?>(id)?.visibility = gone
+        for (id in listOf(R.id.topbar, R.id.content, R.id.back, R.id.title, R.id.cast, R.id.playSettings)) findViewById<View?>(id)?.visibility = gone
+        // The tall full screen's episode button is shown only when there is more than one episode: refreshLists decides.
+        if (inPip) findViewById<View?>(R.id.episodesBtn)?.visibility = View.GONE else refreshLists()
         playerView.useController = !inPip
         if (inPip) playerView.hideController()
     }
@@ -1906,7 +1997,7 @@ class PlayActivity : BaseActivity() {
         view.overlayFrameLayout?.addView(label, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
         hud = label
 
-        var mode = 0 // 0 undecided, 1 seek, 2 brightness, 3 volume
+        var mode = 0 // 0 undecided, 1 seek, 2 brightness, 3 volume, 4 pulling for / out of full screen, 5 pulled
         var startPos = 0L
         var seekTarget = 0L
         var startBrightness = 0f
@@ -1918,7 +2009,7 @@ class PlayActivity : BaseActivity() {
                 override fun onDown(e: MotionEvent) = true
 
                 override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                    if (view.isControllerFullyVisible) view.hideController() else view.showController()
+                    if (controllerShown) view.hideController() else view.showController()
                     return true
                 }
 
@@ -1943,6 +2034,10 @@ class PlayActivity : BaseActivity() {
                             if (!canSeek() || p.duration <= 0) return false
                             mode = 1
                             startPos = p.currentPosition
+                        } else if (portraitVideo && (vfullShown || canPortraitFull) && e1.x in view.width * 0.28f..view.width * 0.72f) {
+                            // A tall picture: in the middle a vertical drag is the pull for full screen. The sides (the black
+                            // bars of the small picture) keep brightness on the left and volume on the right.
+                            mode = 4
                         } else if (e1.x < view.width / 2) {
                             mode = 2
                             startBrightness = currentBrightness()
@@ -1951,6 +2046,20 @@ class PlayActivity : BaseActivity() {
                             startVolume = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
                         }
                     }
+                    if (mode == 4) {
+                        // Down on the small picture opens the full screen, up on the full screen closes it. Done from the
+                        // handler: the views are replaced, and this touch is still being delivered to the old ones.
+                        val pulled = e2.y - e1.y
+                        if (!vfullShown && pulled > dp(72)) {
+                            mode = 5
+                            handler.post { setPortraitFull(true) }
+                        } else if (vfullShown && pulled < -dp(72)) {
+                            mode = 5
+                            handler.post { setPortraitFull(false) }
+                        }
+                        return true
+                    }
+                    if (mode == 5) return true
                     view.hideController()
                     val dx = e2.x - e1.x
                     val up = e1.y - e2.y
@@ -1987,7 +2096,9 @@ class PlayActivity : BaseActivity() {
                 }
                 mode = 0
                 label.visibility = View.GONE
-                if (event.actionMasked == MotionEvent.ACTION_UP) v.performClick()
+                // PlayerView.performClick toggles the controller by itself, and the confirmed tap above toggles it again:
+                // on a phone that cancelled out and a tap changed nothing. On TV the click opens the full screen.
+                if (event.actionMasked == MotionEvent.ACTION_UP && isTv) v.performClick()
             }
             true
         }

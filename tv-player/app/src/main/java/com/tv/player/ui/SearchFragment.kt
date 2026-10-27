@@ -21,16 +21,21 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.progressindicator.LinearProgressIndicator
 import com.google.android.material.tabs.TabLayout
 import com.tv.player.R
+import com.tv.player.core.Ai
 import com.tv.player.core.Cms
 import com.tv.player.core.Grouper
 import com.tv.player.core.Hot
 import com.tv.player.core.Library
-import com.tv.player.core.Search
 import com.tv.player.core.ResultFilter
+import com.tv.player.core.Search
+import com.tv.player.core.Smart
 import com.tv.player.core.Store
 import com.tv.player.data.VodGroup
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class SearchFragment : Fragment(R.layout.fragment_search) {
     private var job: Job? = null
@@ -433,7 +438,7 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
     }
 
     private fun search(text: String) {
-        val keyword = text.trim()
+        val keyword = Search.clean(text)
         if (keyword.isEmpty()) return
         (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
             .hideSoftInputFromWindow(query.windowToken, 0)
@@ -459,25 +464,136 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         progress.visibility = View.VISIBLE
         status.text = "正在搜索 ${sources.size} 个源…"
 
-        var done = 0
-        var ok = 0
         job = viewLifecycleOwner.lifecycleScope.launch {
-            Search.all(sources, keyword).collect { hit ->
-                done++
-                if (hit.error == null) ok++
-                grouper.add(hit.items)
-                raw = grouper.snapshot(keyword)
-                showResults()
-                status.text = "已返回 $done/${sources.size} 个源 · ${grouper.size} 个结果"
+            // A sentence ("想看一部女主重生的短剧") is taken apart; a plain title is searched as typed.
+            val plan = Smart.parse(keyword)
+            // Titles that rank first in the list besides the typed text: what a retry fell back to, or what the AI suggested.
+            val also = ArrayList<String>().apply { if (plan.query != keyword) add(plan.query) }
+            var okEver = 0 // the most sources that answered in any one round
+            var firstRound = true
+            var how = ""
+            val tried = HashSet<String>()
+
+            /** One search round over every source; the results join the merged list as the sources answer. */
+            suspend fun round(queries: List<String>, note: String, ms: Long, track: Boolean = firstRound) {
+                var done = 0
+                var ok = 0
+                tried += queries
+                status.text = "$note${sources.size} 个源…"
+                // Only the first round counts towards a source's cool-down: one user search is one strike at most.
+                val merged = queries.map { Search.all(sources, it, perSourceMs = ms, trackHealth = track) }.merge()
+                val total = sources.size * queries.size
+                merged.collect { hit ->
+                    done++
+                    if (hit.error == null) ok++
+                    grouper.add(hit.items)
+                    raw = grouper.snapshot(keyword, also.toList(), plan.kind, plan.year)
+                    showResults()
+                    status.text = "${note}已返回 $done/$total 个源 · ${grouper.size} 个结果"
+                }
+                okEver = maxOf(okEver, ok / queries.size.coerceAtLeast(1))
+                if (track) firstRound = false
             }
+
+            /** A shorter or corrected query: its title joins the ranking while it runs, and leaves again if it found nothing. */
+            suspend fun retry(q: String, note: String, ms: Long = 6_000): Boolean {
+                also += q
+                round(listOf(q), note, ms)
+                if (grouper.size == 0) also.remove(q)
+                return grouper.size > 0
+            }
+
+            // 0. A sentence that was taken apart is first searched as typed, in case it is really a title that merely
+            //    looks like one ("搜索者", "回到1980年的夏天"); found, it is left alone.
+            var found = false
+            if (plan.query != keyword) {
+                // The 5 s limit is short for a slow source: that is no reason to count it as failed.
+                round(listOf(keyword), "", 5_000, track = false)
+                found = grouper.size > 0
+                if (found) also.clear()
+            }
+
+            // 1. The whole (taken apart) keyword, then shorter ones (no season, no "全集", the first word).
+            if (!found) {
+                val tries = (listOf(plan.query) + Search.relaxed(plan.query, withPrefix = false) + plan.extras).distinct()
+                    // A single character left over from taking a title apart ("者") would match everything that has it.
+                    .filter { it !in tried && (it == keyword || Search.canon(it).length >= 2) }
+                for ((n, q) in tries.withIndex()) {
+                    val note = if (n == 0 && plan.query == keyword) "" else "没有找到「$keyword」，改搜「$q」 · "
+                    if (n == 0) {
+                        round(listOf(q), note, 10_000)
+                        found = grouper.size > 0
+                    } else {
+                        found = retry(q, note)
+                    }
+                    if (found) {
+                        if (q != keyword) how = "按「$q」搜到"
+                        break
+                    }
+                    // Every source failing means the network, not the keyword: shorter queries would only fail again.
+                    if (okEver == 0) break
+                }
+            }
+
+            // 2. A typo: the closest title the user has watched, favorited or seen on the charts.
+            if (grouper.size == 0 && okEver > 0) {
+                val near = Smart.nearest(plan.query, knownTitles(Hot.cached() ?: hotSections))
+                if (near != null && retry(near, "没有找到「$keyword」，试试「$near」 · ")) how = "你是不是想找「$near」"
+            }
+
+            // 3. Experimental, only when switched on in the settings: ask the AI for titles to search. What looks like a
+            //    pasted link or code is never sent.
+            var aiNote = ""
+            if (grouper.size == 0 && okEver > 0 && Store.aiSearch() && Ai.allowed(keyword)) {
+                status.text = "本地没搜到，正在请 AI 推荐片名（实验功能，通常要 10 秒左右）…"
+                val answer = Ai.suggest(keyword)
+                if (answer.titles.isNotEmpty()) {
+                    val top = answer.titles.take(3)
+                    also += answer.titles
+                    round(top, "AI 推荐：${top.joinToString("、")} · ", 6_000)
+                    if (grouper.size > 0) {
+                        // Only the guesses that the sources really have are worth naming.
+                        val have = top.filter { t -> raw.any { Search.matches(t, it.title) } }
+                        how = "AI 推荐：${have.ifEmpty { top }.joinToString("、")}，仅供参考"
+                    } else {
+                        also.removeAll(answer.titles.toSet())
+                        aiNote = "AI 推荐了${top.joinToString("、")}，但源里都没有"
+                    }
+                } else {
+                    aiNote = answer.error ?: "AI 没有想到合适的片名"
+                }
+            }
+
+            // 4. Last, the start of a long keyword: it nearly always finds something, so it must not come before the above.
+            if (grouper.size == 0 && okEver > 0) {
+                val head = Search.relaxed(plan.query).firstOrNull { it !in tried && it != keyword }
+                if (head != null && retry(head, "没有找到「$keyword」，改搜「$head」 · ")) how = "按「$head」搜到"
+            }
+
             progress.visibility = View.GONE
-            status.text = "完成：$ok/${sources.size} 个源可用，共 ${grouper.size} 个结果"
+            val via = if (how.isEmpty() || grouper.size == 0) "" else "（$how）"
+            status.text = "完成：$okEver/${sources.size} 个源可用，共 ${grouper.size} 个结果$via"
             if (grouper.size == 0) {
                 empty.findViewById<ImageView>(R.id.emptyIcon).setImageResource(R.drawable.ic_search)
                 empty.findViewById<TextView>(R.id.emptyTitle).text = "没有找到「$keyword」"
-                empty.findViewById<TextView>(R.id.emptySub).text = "换个关键词，或者少写几个字再试"
+                empty.findViewById<TextView>(R.id.emptySub).text = when {
+                    okEver == 0 -> "所有源都没有响应，检查一下网络，或到“设置”里更新订阅"
+                    aiNote.isNotEmpty() -> aiNote
+                    Store.aiSearch() -> "换个关键词，或者检查有没有错别字"
+                    else -> "换个关键词，或者检查有没有错别字。\n也可以在“设置”里开启实验功能“AI 辅助搜索”"
+                }
                 empty.visibility = View.VISIBLE
             }
         }
+    }
+
+    /** Titles worth comparing a failed keyword with: what was watched and favorited, and what the charts show. */
+    private suspend fun knownTitles(charts: List<Hot.Section>): Set<String> = withContext(Dispatchers.IO) {
+        val out = LinkedHashSet<String>()
+        // Not the search history: it holds the typos and dead ends this is meant to correct.
+        Library.history(100).forEach { out += Cms.cleanTitle(it.title) }
+        Library.favorites().forEach { out += Cms.cleanTitle(it.title) }
+        charts.forEach { s -> s.items.forEach { out += Cms.cleanTitle(it.title) } }
+        out
     }
 }

@@ -233,6 +233,16 @@ object Store {
 
     fun setLeaveAction(action: String) = prefs.edit().putString("leave_action", action).apply()
 
+    /** The experimental AI search (see [Ai]): off until the user switches it on, because it sends the typed text to a third party. */
+    fun aiSearch(): Boolean = prefs.getBoolean("ai_search", false)
+
+    fun setAiSearch(on: Boolean) = prefs.edit().putBoolean("ai_search", on).apply()
+
+    /** How often the "pull down for a tall full screen" tip has been shown; it is dropped after a few times. */
+    fun vfullTips(): Int = prefs.getInt("vfull_tips", 0)
+
+    fun bumpVfullTips() = prefs.edit().putInt("vfull_tips", vfullTips() + 1).apply()
+
     /** How the picture fills the frame: "fit" (letterbox, default), "zoom" (crop to fill) or "fill" (stretch). */
     fun resizeMode(): String = prefs.getString("resize_mode", "fit") ?: "fit"
 
