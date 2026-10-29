@@ -40,6 +40,11 @@ object Store {
 
     fun setLineMode(mode: String) = prefs.edit().putString("line_mode", mode).apply()
 
+    /** Fetch the next segments (or pieces of a file) over extra connections on lines that limit each one. On unless switched off in the settings. */
+    fun parallelPrefetch(): Boolean = prefs.getBoolean("parallel_prefetch", true)
+
+    fun setParallelPrefetch(on: Boolean) = prefs.edit().putBoolean("parallel_prefetch", on).apply()
+
     /** TV only: "auto" (design size 960dp across), "small" or "large". */
     fun tvScale(): String = prefs.getString("tv_scale", "auto") ?: "auto"
 

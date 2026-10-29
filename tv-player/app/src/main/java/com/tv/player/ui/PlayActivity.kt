@@ -110,6 +110,9 @@ import com.tv.player.core.Quark
 import com.tv.player.core.QuarkWeb
 import com.tv.player.core.Resolve
 import com.tv.player.core.CachePolicy
+import com.tv.player.core.FallbackLatch
+import com.tv.player.core.PrefetchPolicy
+import com.tv.player.core.PrefetchScheduler
 import com.tv.player.core.PlayCache
 import com.tv.player.core.StallPolicy
 import com.tv.player.core.Store
@@ -122,6 +125,7 @@ import com.tv.player.data.VodGroup
 import com.tv.player.data.VodItem
 import com.tv.player.data.toJsonString
 import com.tv.player.data.vodItemsFromJson
+import java.util.concurrent.Executors
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -263,6 +267,15 @@ class PlayActivity : BaseActivity() {
 
     // Stalls in this viewing: the more there were, the longer playback gathers buffer before resuming (see StallPolicy).
     private val stallPolicy = StallPolicy()
+
+    // Fetching ahead / reading in pieces (on demand only). prefetchRoot is the address of what the player has now: only
+    // that is fetched ahead for, not an episode loaded ahead of it.
+    private val fallbackLatch = FallbackLatch()
+    private val prefetchPool = Executors.newCachedThreadPool { r -> Thread(r, "tvp-prefetch").apply { isDaemon = true } }
+    private var prefetch: PrefetchScheduler? = null
+
+    @Volatile
+    private var prefetchRoot: String? = null
     private var stalledThisEpisode = false
     private var lastSeekAt = 0L
 
@@ -406,14 +419,50 @@ class PlayActivity : BaseActivity() {
         // are a drive's files: their addresses expire and need the login.
         // A drive's files (either kind of login) are left alone as a whole: one film would fill the cache on its own.
         val fromDrive = !isLive && items.any { it.sourceKey == Quark.SOURCE_KEY || it.sourceKey == QuarkWeb.SOURCE_KEY }
-        val dataSource: DataSource.Factory = if (isLive || fromDrive) network else RoutingDataSource.Factory(
-            direct = network,
-            cached = CacheDataSource.Factory()
-                .setCache(PlayCache.get(this))
-                .setUpstreamDataSourceFactory(network)
-                .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR), // a cache that fails must not fail the playback
-            bypass = { uri -> !CachePolicy.cacheable(uri.scheme, uri.path) || uri.host?.let(QuarkWeb::headersFor) != null },
-        )
+        val bypass = { uri: Uri -> !CachePolicy.cacheable(uri.scheme, uri.path) || uri.host?.let(QuarkWeb::headersFor) != null }
+        val dataSource: DataSource.Factory = if (isLive || fromDrive) network else {
+            val cache = PlayCache.get(this)
+            // Lines that limit each connection: the next segments are fetched ahead over other connections (an HLS stream),
+            // or a video file is read in pieces over several (see PrefetchScheduler and RangedDataSource). Off on a metered
+            // network, as the line tests are.
+            val prefetching = Store.parallelPrefetch()
+            val allowed = { root: String -> prefetchOn() && root == prefetchRoot }
+            val scheduler = if (prefetching) PrefetchScheduler(
+                fetcher = CacheSegmentFetcher(cache, network),
+                executor = prefetchPool,
+                latch = fallbackLatch,
+                allowed = allowed,
+                exclude = { url -> bypass(Uri.parse(url)) },
+                log = { Log.d("TVP", "prefetch: $it") },
+            ).also { prefetch = it } else null
+            val fileSource: DataSource.Factory = if (!prefetching) network else RangedDataSource.Factory(
+                upstream = network,
+                eligible = { uri -> !bypass(uri) && PrefetchPolicy.rangedFile(uri.path) && allowed(uri.toString()) },
+                latch = fallbackLatch,
+                executor = prefetchPool,
+                log = { Log.d("TVP", "prefetch: $it") },
+            )
+            // A cache that fails must not fail the playback.
+            val cacheFlags = CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR
+            val routed = RoutingDataSource.Factory(
+                direct = network,
+                // Segments: one being fetched ahead is waited for, not downloaded a second time on another connection.
+                cached = CacheDataSource.Factory()
+                    .setCache(cache)
+                    .setUpstreamDataSourceFactory(network)
+                    .setFlags(cacheFlags or (if (prefetching) CacheDataSource.FLAG_BLOCK_ON_CACHE else 0)),
+                bypass = bypass,
+                // Whole video files: read in pieces below the cache, nothing is written to it from the side, so they
+                // keep the plain, never-waiting behaviour.
+                fileCached = if (prefetching) CacheDataSource.Factory()
+                    .setCache(cache)
+                    .setUpstreamDataSourceFactory(fileSource)
+                    .setFlags(cacheFlags) else null,
+                // Only the file being played: an HLS stream's segments may be called .mp4 too, and keep waiting for fetches ahead.
+                isFile = { uri -> PrefetchPolicy.rangedFile(uri.path) && uri.toString() == prefetchRoot },
+            )
+            if (scheduler != null) PrefetchingDataSource.Factory(routed, scheduler) else routed
+        }
         val mediaSourceFactory = DefaultMediaSourceFactory(dataSource).setLoadErrorHandlingPolicy(failFast)
         // The player is built by the preload manager's builder so both share one pipeline: what the manager loads ahead
         // of the next episode (its address, its playlist, the first seconds) is what the player then plays.
@@ -878,6 +927,11 @@ class PlayActivity : BaseActivity() {
     // ---- playback ------------------------------------------------------------------------------------------------
 
     private val listener = object : Player.Listener {
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            prefetchRoot = mediaItem?.localConfiguration?.uri?.toString()
+            prefetch?.reset() // what was fetched ahead for the old stream goes now, not when the new one first asks
+        }
+
         override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
             if (reason == Player.DISCONTINUITY_REASON_SEEK || reason == Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT) noteDisturbance()
         }
@@ -1069,6 +1123,7 @@ class PlayActivity : BaseActivity() {
         stalledThisEpisode = false
         handler.removeCallbacks(stall)
         player?.stop()
+        prefetch?.reset() // the line being left is no longer fetched ahead for, however long the next one takes to resolve
         started = false
         resolution = ""
         playJob = lifecycleScope.launch {
@@ -1083,6 +1138,7 @@ class PlayActivity : BaseActivity() {
                 val cand = quick?.first?.also { tried += it.url } ?: nextCandidate()
                 if (cand == null) {
                     player?.stop()
+                    prefetch?.reset()
                     allFailed = true
                     if (portraitFull) setPortraitFull(false) // the message is on the page behind
                     updateKeepScreen()
@@ -1157,6 +1213,9 @@ class PlayActivity : BaseActivity() {
         "smart_always" -> true
         else -> !(getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).isActiveNetworkMetered
     }
+
+    /** Fetching ahead costs extra connections and data: wherever the line tests are skipped, it is too. */
+    private fun prefetchOn(): Boolean = smartOn()
 
     /**
      * Smooth lines first, the sharpest of them leading; if none is smooth, the fastest; lines that failed the test
@@ -2583,6 +2642,8 @@ class PlayActivity : BaseActivity() {
         player = null
         preloadManager?.release()
         preloadManager = null
+        prefetch?.release()
+        prefetchPool.shutdownNow()
         super.onDestroy()
     }
 }

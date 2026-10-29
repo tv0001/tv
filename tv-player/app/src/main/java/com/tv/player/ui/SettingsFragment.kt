@@ -150,6 +150,10 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             )
         }
 
+        val parallelPrefetch = view.findViewById<ChipGroup>(R.id.parallelPrefetch)
+        parallelPrefetch.check(if (Store.parallelPrefetch()) R.id.prefetchOn else R.id.prefetchOff)
+        parallelPrefetch.setOnCheckedStateChangeListener { _, ids -> Store.setParallelPrefetch(ids.firstOrNull() == R.id.prefetchOn) }
+
         val hotLayout = view.findViewById<ChipGroup>(R.id.hotLayout)
         hotLayout.check(if (Store.hotLayout() == "rows") R.id.hotLayoutRows else R.id.hotLayoutTabs)
         hotLayout.setOnCheckedStateChangeListener { _, ids ->

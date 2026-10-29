@@ -15,6 +15,9 @@ class RoutingDataSource(
     private val direct: DataSource,
     private val cached: DataSource,
     private val bypass: (Uri) -> Boolean,
+    /** For the addresses [isFile] picks (whole video files), a cached source of their own, when given. */
+    private val fileCached: DataSource? = null,
+    private val isFile: (Uri) -> Boolean = { false },
 ) : DataSource {
     private val listeners = ArrayList<TransferListener>()
     private var active: DataSource? = null
@@ -23,10 +26,15 @@ class RoutingDataSource(
         listeners += transferListener
         direct.addTransferListener(transferListener)
         cached.addTransferListener(transferListener)
+        fileCached?.addTransferListener(transferListener)
     }
 
     override fun open(dataSpec: DataSpec): Long {
-        val chosen = if (bypass(dataSpec.uri)) direct else cached
+        val chosen = when {
+            bypass(dataSpec.uri) -> direct
+            fileCached != null && isFile(dataSpec.uri) -> fileCached
+            else -> cached
+        }
         active = chosen
         return chosen.open(dataSpec)
     }
@@ -49,7 +57,10 @@ class RoutingDataSource(
         private val direct: DataSource.Factory,
         private val cached: DataSource.Factory,
         private val bypass: (Uri) -> Boolean,
+        private val fileCached: DataSource.Factory? = null,
+        private val isFile: (Uri) -> Boolean = { false },
     ) : DataSource.Factory {
-        override fun createDataSource(): DataSource = RoutingDataSource(direct.createDataSource(), cached.createDataSource(), bypass)
+        override fun createDataSource(): DataSource =
+            RoutingDataSource(direct.createDataSource(), cached.createDataSource(), bypass, fileCached?.createDataSource(), isFile)
     }
 }

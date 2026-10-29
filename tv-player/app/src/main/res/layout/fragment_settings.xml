@@ -619,6 +619,47 @@
 
                 </com.google.android.material.chip.ChipGroup>
 
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="并行加速"
+                    android:textAppearance="@style/TextAppearance.TvPlayer.Section" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="有些片源会限制每条连接的速度，导致卡顿。开启后，点播会在这种线路上用几条连接同时多下后面的内容（直播和网盘不用）；线路本身够快、服务器不让多连接、或者多连接没有帮助时，会自动停止。会多用一点流量，所以按流量计费的网络上要选了“智能（流量下也测）”才启用，选“按顺序”时也不启用。下次播放时生效。"
+                    android:textAppearance="@style/TextAppearance.TvPlayer.Caption"
+                    android:textColor="@color/on_surface_variant" />
+
+                <com.google.android.material.chip.ChipGroup
+                    android:id="@+id/parallelPrefetch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    app:selectionRequired="true"
+                    app:singleSelection="true">
+
+                    <com.google.android.material.chip.Chip
+                        android:id="@+id/prefetchOn"
+                        style="@style/Widget.TvPlayer.Chip"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:checkable="true"
+                        android:text="开启" />
+
+                    <com.google.android.material.chip.Chip
+                        android:id="@+id/prefetchOff"
+                        style="@style/Widget.TvPlayer.Chip"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:checkable="true"
+                        android:text="关闭" />
+
+                </com.google.android.material.chip.ChipGroup>
+
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
