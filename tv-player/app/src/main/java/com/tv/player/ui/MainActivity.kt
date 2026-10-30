@@ -61,7 +61,12 @@ class MainActivity : BaseActivity() {
         }
 
         onBackPressedDispatcher.addCallback(this) {
-            if (nav.selectedItemId != R.id.nav_search) nav.selectedItemId = R.id.nav_search else confirmExit()
+            when {
+                nav.selectedItemId != R.id.nav_search -> nav.selectedItemId = R.id.nav_search
+                // 电视：发现页的搜索框里有字时，返回键先清空它（手机上 clearOnBack 不处理，照旧）。
+                (fm.findFragmentByTag("search") as? SearchFragment)?.clearOnBack() == true -> Unit
+                else -> confirmExit()
+            }
         }
 
         lifecycleScope.launch {

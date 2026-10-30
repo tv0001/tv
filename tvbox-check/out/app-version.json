@@ -1,9 +1,9 @@
 {
-  "versionCode": 27,
-  "versionName": "1.0.26",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.26.apk",
-  "sha256": "11fa094936f2fdcd673fa3ae2153a6139a7733bf9b81200326ff467ea3c509cf",
+  "versionCode": 28,
+  "versionName": "1.0.27",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.27.apk",
+  "sha256": "fb057f4ed5a7cd0767240588eaebd8244319a0bef2d907eb61036f894802e7fb",
   "size": 3229079,
-  "notes": "播放：新增“并行加速”（设置页可关）。有些片源会限制每条连接的速度，导致卡顿；开启后，点播会在这种线路上用几条连接同时多下后面的内容。线路本身够快、服务器不让多连接、或者多连接没有帮助时会自动停止。按流量计费的网络上默认不启用（选线方式选“智能（流量下也测）”才启用）；直播和网盘不受影响。",
+  "notes": "电视：在发现页搜索后按返回键，会先清空搜索框、回到热播榜；框里没字时再按返回才询问是否退出。手机上不变。",
   "force": false
 }

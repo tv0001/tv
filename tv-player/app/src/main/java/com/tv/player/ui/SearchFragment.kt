@@ -140,6 +140,17 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         reset()
     }
 
+    /**
+     * 电视上按返回键时先清空搜索框（和点清除按钮一样），框里没字才轮到离开应用。由 MainActivity 的返回处理调用；
+     * 清空了返回 true。手机上不处理，始终返回 false。
+     */
+    fun clearOnBack(): Boolean {
+        if (view == null || !requireContext().isTv() || query.text.isEmpty()) return false
+        query.text.clear()
+        reset()
+        return true
+    }
+
     override fun onHiddenChanged(hidden: Boolean) {
         super.onHiddenChanged(hidden)
         if (!hidden) {
