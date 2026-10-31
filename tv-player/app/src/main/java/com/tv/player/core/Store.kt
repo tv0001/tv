@@ -258,6 +258,36 @@ object Store {
 
     fun setResizeMode(mode: String) = prefs.edit().putString("resize_mode", mode).apply()
 
+    /** 字幕大小：0 小、1 标准（默认）、2 大、3 特大。 */
+    fun subtitleSize(): Int = prefs.getInt("subtitle_size", 1).coerceIn(0, 3)
+
+    fun setSubtitleSize(size: Int) = prefs.edit().putInt("subtitle_size", size).apply()
+
+    /** 电视上按片源帧率切换刷新率（见 FrameRateMatch）。默认关：不少电视切换时会黑屏一两秒。 */
+    fun matchFrameRate(): Boolean = prefs.getBoolean("match_frame_rate", false)
+
+    fun setMatchFrameRate(on: Boolean) = prefs.edit().putBoolean("match_frame_rate", on).apply()
+
+    /** 接收手机投屏（DLNA，见 DlnaRenderer）。没选过时电视上开、手机上关。 */
+    fun dlnaReceiver(default: Boolean): Boolean = prefs.getBoolean("dlna_receiver", default)
+
+    fun setDlnaReceiver(on: Boolean) = prefs.edit().putBoolean("dlna_receiver", on).apply()
+
+    /** 离线下载在按流量计费的网络上也下（默认只在 Wi-Fi 下）。 */
+    fun downloadOnMetered(): Boolean = prefs.getBoolean("download_metered", false)
+
+    fun setDownloadOnMetered(on: Boolean) = prefs.edit().putBoolean("download_metered", on).apply()
+
+    /** 网络存储（WebDAV / SMB）的列表，JSON，含账号密码：只存在本机，不进备份。 */
+    fun netServersJson(): String = prefs.getString("net_servers", null) ?: "[]"
+
+    fun setNetServersJson(json: String) = prefs.edit().putString("net_servers", json).apply()
+
+    /** 投屏接收端的设备编号：手机记住的是它，所以生成一次以后不变。 */
+    fun dlnaUuid(): String = prefs.getString("dlna_uuid", null) ?: java.util.UUID.randomUUID().toString().also {
+        prefs.edit().putString("dlna_uuid", it).apply()
+    }
+
     /** The newest episode count of a favorite the user has already been told about (see [Episodes]). */
     fun notifiedLatest(key: String): Int = prefs.getInt("notified_$key", 0)
 

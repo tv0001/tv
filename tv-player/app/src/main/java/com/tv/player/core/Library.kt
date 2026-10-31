@@ -144,6 +144,54 @@ object Library {
         .put("favorites", JSONArray().also { a -> favorites().forEach { a.put(toJson(it)) } })
         .put("history", JSONArray().also { a -> history(1000).forEach { a.put(toJson(it)) } })
 
+    /**
+     * 局域网同步：把另一台设备的记录合并进来。观看进度以时间新的为准；收藏只增不减（在一台上取消收藏不会同步过去）。
+     * 返回新增或更新的条数（收藏，观看记录）。
+     */
+    fun mergeJson(o: JSONObject): Pair<Int, Int> {
+        var f = 0
+        var h = 0
+        val localFavorites = favorites().map { it.key }.toSet()
+        db.beginTransaction()
+        try {
+            o.optJSONArray("favorites")?.let { a ->
+                for (i in 0 until a.length()) {
+                    val e = fromJson(a.getJSONObject(i))
+                    if (e.key in localFavorites) continue
+                    db.insertWithOnConflict(
+                        "favorites", null,
+                        ContentValues().apply {
+                            put("k", e.key); put("title", e.title); put("pic", e.pic); put("items", e.items.toJsonString()); put("time", e.time)
+                            put("seen", e.seen); put("latest", e.latest)
+                        },
+                        SQLiteDatabase.CONFLICT_IGNORE,
+                    )
+                    f++
+                }
+            }
+            o.optJSONArray("history")?.let { a ->
+                for (i in 0 until a.length()) {
+                    val e = fromJson(a.getJSONObject(i))
+                    val local = progress(e.key)
+                    if (local != null && local.time >= e.time) continue
+                    db.insertWithOnConflict(
+                        "history", null,
+                        ContentValues().apply {
+                            put("k", e.key); put("title", e.title); put("pic", e.pic); put("items", e.items.toJsonString())
+                            put("ep", e.ep); put("ep_name", e.epName); put("pos", e.posMs); put("time", e.time)
+                        },
+                        SQLiteDatabase.CONFLICT_REPLACE,
+                    )
+                    h++
+                }
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        return f to h
+    }
+
     /** Returns (favorites, history) counts imported. */
     fun importJson(o: JSONObject): Pair<Int, Int> {
         var f = 0

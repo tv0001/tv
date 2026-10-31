@@ -34,6 +34,12 @@ class MineFragment : Fragment(R.layout.fragment_mine) {
             adapter = this@MineFragment.adapter
         }
         view.findViewById<View>(R.id.panButton).setOnClickListener { PanActivity.start(requireContext()) }
+        view.findViewById<View>(R.id.netButton).setOnClickListener { NetStoreActivity.start(requireContext()) }
+        view.findViewById<View>(R.id.downloadButton).apply {
+            // 离线下载是给手机、平板出门看的，电视上不放
+            visibility = if (requireContext().isTv()) View.GONE else View.VISIBLE
+            setOnClickListener { DownloadsActivity.start(requireContext()) }
+        }
         view.findViewById<ChipGroup>(R.id.mode).setOnCheckedStateChangeListener { _, ids ->
             showFavorites = ids.firstOrNull() == R.id.chipFav
             refresh()

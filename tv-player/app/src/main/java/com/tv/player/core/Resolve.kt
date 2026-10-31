@@ -14,6 +14,8 @@ object Resolve {
         // A drive file: its address is fetched now, as the drive hands out addresses that expire.
         if (QuarkWeb.isLink(playUrl)) return runCatching { QuarkWeb.link(playUrl) }.getOrNull()
         if (Quark.isLink(playUrl)) return runCatching { Quark.link(playUrl) }.getOrNull()
+        // 网络存储（WebDAV / SMB）里的文件本身就是视频，地址不会过期
+        if (NetStore.isLink(playUrl)) return NetStore.resolve(playUrl)
         val u = runCatching { URL(playUrl) }.getOrNull() ?: return null
         val pathAndQuery = u.path + (u.query?.let { "?$it" } ?: "")
         if (direct.containsMatchIn(pathAndQuery)) return playUrl

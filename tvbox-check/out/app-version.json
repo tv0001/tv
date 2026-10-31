@@ -1,9 +1,9 @@
 {
-  "versionCode": 28,
-  "versionName": "1.0.27",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.27.apk",
-  "sha256": "fb057f4ed5a7cd0767240588eaebd8244319a0bef2d907eb61036f894802e7fb",
-  "size": 3229079,
-  "notes": "电视：在发现页搜索后按返回键，会先清空搜索框、回到热播榜；框里没字时再按返回才询问是否退出。手机上不变。",
+  "versionCode": 29,
+  "versionName": "1.0.28",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.28.apk",
+  "sha256": "50b2109f5a9e830a1fe5d9ad1f1928029d1fd9326ae40e29b0db9b08c7d13ecf",
+  "size": 6453396,
+  "notes": "新功能：遥控器按住左右键快进会越来越快；一集快放完时提示下一集，可立即播放或取消；字幕可调大小，导入的字幕可调早晚；电视能接收手机的 DLNA 投屏；「我的」里加了网络存储（WebDAV / SMB）和手机离线下载；手机和电视可以同步收藏和观看记录；搜索有联想，电视上有首字母键盘；搜索栏加了分类筛选；电视可自动匹配帧率（设置里开启）；没有 AC3 / DTS 硬解的设备也能出声音。",
   "force": false
 }

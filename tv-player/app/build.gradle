@@ -10,8 +10,12 @@ android {
         applicationId = 'com.tv.player'
         minSdk = 26
         targetSdk = 35
-        versionCode = (project.findProperty('appVersionCode') ?: '28').toString().toInteger()
-        versionName = (project.findProperty('appVersionName') ?: '1.0.27').toString()
+        versionCode = (project.findProperty('appVersionCode') ?: '29').toString().toInteger()
+        versionName = (project.findProperty('appVersionName') ?: '1.0.28').toString()
+        // 唯一的原生库是 ffmpeg 音频解码：电视盒子和手机基本都是 ARM，只打这两种（少 3MB）。没有 ARM 转译的 x86 设备装不上
+        ndk {
+            abiFilters 'armeabi-v7a', 'arm64-v8a'
+        }
     }
 
     buildFeatures {
@@ -23,6 +27,13 @@ android {
             minifyEnabled = true
             shrinkResources = true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    // bouncycastle（smbj 用它算 NTLM）自带的后量子算法数据表和证书提示文字用不到，不打进包里
+    packaging {
+        resources {
+            excludes += ['org/bouncycastle/pqc/**', 'org/bouncycastle/x509/*.properties']
         }
     }
 
@@ -43,6 +54,12 @@ dependencies {
     implementation 'androidx.media3:media3-exoplayer:1.6.1'
     implementation 'androidx.media3:media3-exoplayer-hls:1.6.1'
     implementation 'androidx.media3:media3-ui:1.6.1'
+    // AC3 / EAC3 / DTS / TrueHD 等音轨的软解（设备没有对应硬解时才用）。Jellyfin 按 media3 版本编译的官方 ffmpeg 扩展；
+    // 它的 pom 写着依赖 media3 1.7.1，会把播放器整体顶上去，所以不要传递依赖，解码器基础库按本项目的版本单独引入
+    implementation('org.jellyfin.media3:media3-ffmpeg-decoder:1.6.1+2') { transitive = false }
+    implementation 'androidx.media3:media3-decoder:1.6.1'
+    // 网络存储的 SMB（Windows 共享、NAS）
+    implementation 'com.hierynomus:smbj:0.15.0'
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
     implementation 'io.coil-kt:coil:2.7.0'
     implementation 'com.google.zxing:core:3.5.3'

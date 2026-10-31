@@ -106,6 +106,83 @@
 
         </LinearLayout>
 
+        <!-- 字幕大小 -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="6dp"
+            android:text="大小"
+            android:textColor="@color/on_surface"
+            android:textSize="14sp" />
+
+        <com.google.android.material.button.MaterialButtonToggleGroup
+            android:id="@+id/subSizeGroup"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:selectionRequired="true"
+            app:singleSelection="true" />
+
+        <!-- 字幕时间（只对导入的字幕） -->
+        <LinearLayout
+            android:id="@+id/subOffsetBox"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="时间"
+                    android:textColor="@color/on_surface"
+                    android:textSize="14sp" />
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    android:background="@drawable/bg_stepper"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/subOffsetMinus"
+                        style="@style/Widget.TvPlayer.StepButton"
+                        android:contentDescription="字幕提前 0.5 秒"
+                        android:text="−" />
+
+                    <TextView
+                        android:id="@+id/subOffsetLabel"
+                        android:layout_width="96dp"
+                        android:layout_height="wrap_content"
+                        android:gravity="center"
+                        android:textColor="@color/on_surface"
+                        android:textSize="14sp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/subOffsetPlus"
+                        style="@style/Widget.TvPlayer.StepButton"
+                        android:contentDescription="字幕延后 0.5 秒"
+                        android:text="+" />
+
+                </LinearLayout>
+
+            </LinearLayout>
+
+            <TextView
+                style="@style/PlaySettingsHint"
+                android:text="只对导入的字幕生效：字幕比声音早就按 +，晚就按 −" />
+
+        </LinearLayout>
+
         <TextView
             android:id="@+id/importSub"
             style="@style/PlaySettingsHint"
@@ -146,6 +223,20 @@
                 android:textColor="@color/accent" />
 
         </LinearLayout>
+
+        <!-- 离线下载（手机、平板，点播） -->
+        <TextView
+            android:id="@+id/downloadEp"
+            style="@style/PlaySettingsHint"
+            android:layout_width="wrap_content"
+            android:background="?attr/selectableItemBackground"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center_vertical"
+            android:minHeight="48dp"
+            android:text="下载这一集，离线看"
+            android:textColor="@color/accent"
+            android:visibility="gone" />
 
         <!-- skip intro / outro -->
         <LinearLayout

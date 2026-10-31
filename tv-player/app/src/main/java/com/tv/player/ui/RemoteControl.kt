@@ -17,9 +17,13 @@ object RemoteControl {
     @Volatile private var covers = 0
 
     /** Call for a dialog shown over the screen; the phone's keys are refused until it is dismissed. */
-    fun cover(dialog: Dialog) {
+    fun cover(dialog: Dialog, onDismiss: (() -> Unit)? = null) {
         covers++
-        dialog.setOnDismissListener { covers-- }
+        // 这里会占用对话框的关闭回调，调用方自己的关闭处理要从 onDismiss 传进来，不然会被覆盖掉
+        dialog.setOnDismissListener {
+            covers--
+            onDismiss?.invoke()
+        }
     }
 
     private val keys = mapOf(

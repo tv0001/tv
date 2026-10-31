@@ -43,6 +43,16 @@
             android:textColorHint="@color/on_surface_variant"
             android:textSize="16sp" />
 
+        <!-- 分类筛选（BrowseActivity） -->
+        <ImageButton
+            android:id="@+id/browse"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="分类筛选"
+            android:src="@drawable/ic_tune"
+            app:tint="@color/on_surface_variant" />
+
         <ImageButton
             android:id="@+id/phoneInput"
             android:layout_width="48dp"
@@ -64,6 +74,33 @@
             app:tint="@color/on_surface_variant" />
 
     </LinearLayout>
+
+    <!-- 电视上的首字母键盘：搜索框有焦点时出现（SearchFragment.buildKeyboard） -->
+    <GridLayout
+        android:id="@+id/keyboard"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:columnCount="10"
+        android:visibility="gone" />
+
+    <!-- 搜索联想：输入时出现，点一个直接搜 -->
+    <HorizontalScrollView
+        android:id="@+id/suggestBox"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:scrollbars="none"
+        android:visibility="gone">
+
+        <com.google.android.material.chip.ChipGroup
+            android:id="@+id/suggest"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            app:chipSpacingVertical="0dp"
+            app:singleLine="true" />
+
+    </HorizontalScrollView>
 
     <LinearLayout
         android:id="@+id/historyBox"

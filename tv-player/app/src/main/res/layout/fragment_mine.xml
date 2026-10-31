@@ -8,11 +8,62 @@
     android:paddingTop="6dp"
     android:paddingEnd="12dp">
 
-    <TextView
-        android:layout_width="wrap_content"
+    <!-- 标题行：右边是下载、网络存储、夸克网盘的入口（手机上放不下时可以横着滑） -->
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="@string/nav_mine"
-        android:textAppearance="@style/TextAppearance.TvPlayer.Headline" />
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/nav_mine"
+            android:textAppearance="@style/TextAppearance.TvPlayer.Headline" />
+
+        <Space
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <HorizontalScrollView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:clipToPadding="false"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/downloadButton"
+                    style="@style/Widget.TvPlayer.TonalButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="8dp"
+                    android:text="下载" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/netButton"
+                    style="@style/Widget.TvPlayer.TonalButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="8dp"
+                    android:text="网络存储" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/panButton"
+                    style="@style/Widget.TvPlayer.TonalButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="夸克网盘" />
+
+            </LinearLayout>
+        </HorizontalScrollView>
+    </LinearLayout>
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -46,18 +97,6 @@
                 android:text="我的收藏" />
 
         </com.google.android.material.chip.ChipGroup>
-
-        <Space
-            android:layout_width="0dp"
-            android:layout_height="1dp"
-            android:layout_weight="1" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/panButton"
-            style="@style/Widget.TvPlayer.TonalButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="夸克网盘" />
 
     </LinearLayout>
 

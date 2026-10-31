@@ -28,6 +28,9 @@ class PhoneServer(private val listener: Listener) {
         suspend fun onVod(name: String, api: String): String
 
         suspend fun onLive(name: String, url: String): String
+
+        /** 添加网络存储（WebDAV / SMB）：电视上输地址和密码太麻烦。返回给手机看的结果。 */
+        suspend fun onStorage(kind: String, name: String, address: String, user: String, pass: String): String
     }
 
     val token: String = SecureRandom().let { r -> (1..8).map { "abcdefghijkmnpqrstuvwxyz23456789"[r.nextInt(32)] }.joinToString("") }
@@ -61,18 +64,8 @@ class PhoneServer(private val listener: Listener) {
 
     /** The address a phone on the same Wi-Fi can open, or null when there is no local network. */
     fun url(): String? {
-        val ip = localIp() ?: return null
+        val ip = localIpv4() ?: return null
         return "http://$ip:$port/$token/"
-    }
-
-    private fun localIp(): String? = try {
-        NetworkInterface.getNetworkInterfaces().toList()
-            .filter { it.isUp && !it.isLoopback }
-            .sortedBy { if (it.name.startsWith("wlan") || it.name.startsWith("eth")) 0 else 1 }
-            .flatMap { it.inetAddresses.toList() }
-            .firstOrNull { it is Inet4Address && it.isSiteLocalAddress }?.hostAddress
-    } catch (e: Exception) {
-        null
     }
 
     private fun serve(c: Socket) = c.use { sock ->
@@ -92,6 +85,7 @@ class PhoneServer(private val listener: Listener) {
         val action = path.removePrefix("/$token").trim('/')
         when {
             action == "remote" -> respond(out, 200, remotePage())
+            action == "log" -> respond(out, 200, logPage())
             // The remote page calls these in the background; the answer is a single line of text.
             action.startsWith("key/") -> respond(out, 200, esc(listener.onKey(action.removePrefix("key/"))))
             method == "GET" || action.isEmpty() -> respond(out, 200, form())
@@ -108,6 +102,7 @@ class PhoneServer(private val listener: Listener) {
             "search" -> if (f["q"].isNullOrEmpty()) "没有输入内容" else { listener.onSearch(f["q"]!!); "已发送，电视正在搜索「${f["q"]}」" }
             "vod" -> runBlocking { listener.onVod(f["name"].orEmpty(), f["api"].orEmpty()) }
             "live" -> runBlocking { listener.onLive(f["name"].orEmpty(), f["url"].orEmpty()) }
+            "storage" -> runBlocking { listener.onStorage(f["kind"].orEmpty(), f["name"].orEmpty(), f["address"].orEmpty(), f["user"].orEmpty(), f["pass"].orEmpty()) }
             else -> "未知操作"
         }
         respond(out, 200, page("结果", "<p>${esc(message)}</p><p><a href=\"/$token/\">返回继续输入</a></p>"))
@@ -179,11 +174,30 @@ document.querySelectorAll('[data-k]').forEach(function (b) {
 </script>""",
     )
 
+    /** 电视上记下的崩溃日志，在手机上看和复制（地址里的查询参数已经去掉）。 */
+    private fun logPage() = page(
+        "崩溃日志",
+        "<pre style=\"white-space:pre-wrap;word-break:break-all;font-size:12px\">${esc(CrashLog.read().ifEmpty { "没有崩溃记录" })}</pre><p><a href=\"/$token/\">返回输入页</a></p>",
+    )
+
     private fun form() = page(
         "给电视发送",
         """<div class="card"><h2>搜索</h2><form method="post" action="search"><input name="q" placeholder="片名，电视上直接开始搜索"><button>在电视上搜索</button></form></div>
 <div class="card"><h2>遥控电视</h2><p>把手机当遥控器用：方向键、确定、返回、播放暂停、换台、音量。</p><a href="remote">打开遥控器</a></div>
 <div class="card"><h2>添加点播源</h2><form method="post" action="vod"><input name="name" placeholder="名称（可不填）"><input name="api" placeholder="接口地址 http(s)://…/api.php/provide/vod"><button>检测并添加</button></form><small>添加前会真实搜索一次，通过才会加入。</small></div>
-<div class="card"><h2>添加直播源</h2><form method="post" action="live"><input name="name" placeholder="名称（可不填）"><input name="url" placeholder="直播列表地址（TXT 或 M3U）"><button>下载并添加</button></form></div>""",
+<div class="card"><h2>添加直播源</h2><form method="post" action="live"><input name="name" placeholder="名称（可不填）"><input name="url" placeholder="直播列表地址（TXT 或 M3U）"><button>下载并添加</button></form></div>
+<div class="card"><h2>添加网络存储</h2><form method="post" action="storage"><select name="kind" style="width:100%;padding:12px;margin:5px 0;border-radius:10px;background:#0E1015;color:#E8EAF0;border:1px solid #363C50;font-size:16px"><option value="webdav">WebDAV（OpenList / Alist、群晖、威联通）</option><option value="smb">SMB（Windows 共享、NAS）</option></select><input name="address" placeholder="如 http://192.168.1.10:5244/dav 或 smb://192.168.1.10/movies"><input name="user" placeholder="用户名（没有就不填）"><input name="pass" type="password" placeholder="密码"><input name="name" placeholder="名称（可不填）"><button>连接并添加</button></form><small>密码只存在电视上，不会上传。</small></div>""" +
+            CrashLog.count().let { n -> if (n == 0) "" else "<div class=\"card\"><h2>崩溃日志</h2><p>电视上记录了 $n 次崩溃。</p><a href=\"log\">查看崩溃日志</a></div>" },
     )
+}
+
+/** 本机在局域网里的 IPv4 地址（Wi-Fi / 有线优先），没有局域网时为 null。手机网页和投屏接收都用它。 */
+fun localIpv4(): String? = try {
+    NetworkInterface.getNetworkInterfaces().toList()
+        .filter { it.isUp && !it.isLoopback }
+        .sortedBy { if (it.name.startsWith("wlan") || it.name.startsWith("eth")) 0 else 1 }
+        .flatMap { it.inetAddresses.toList() }
+        .firstOrNull { it is Inet4Address && it.isSiteLocalAddress }?.hostAddress
+} catch (e: Exception) {
+    null
 }

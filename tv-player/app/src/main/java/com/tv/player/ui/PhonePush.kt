@@ -17,6 +17,7 @@ import com.tv.player.core.Http
 import com.tv.player.core.Live
 import com.tv.player.core.PhoneServer
 import com.tv.player.core.Probe
+import com.tv.player.core.NetStore
 import com.tv.player.core.Store
 import com.tv.player.data.VodSource
 
@@ -55,6 +56,13 @@ object PhonePush {
                 Store.addCustomLive(name, clean, r.text)
                 main.post { Toast.makeText(activity, "手机添加了直播源：$count 个频道", Toast.LENGTH_LONG).show() }
                 return "已添加：$count 个频道"
+            }
+
+            override suspend fun onStorage(kind: String, name: String, address: String, user: String, pass: String): String {
+                val error = NetStore.add(if (kind == "smb") "smb" else "webdav", name, address, user, pass)
+                if (error != null) return "没有添加：$error"
+                main.post { Toast.makeText(activity, "手机添加了网络存储，在「我的」→「网络存储」里打开", Toast.LENGTH_LONG).show() }
+                return "已添加，在电视上「我的」→「网络存储」里打开"
             }
         })
         val view = LayoutInflater.from(activity).inflate(R.layout.dialog_phone_push, null)

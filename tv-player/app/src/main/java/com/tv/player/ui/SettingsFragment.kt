@@ -18,7 +18,9 @@ import androidx.core.widget.doAfterTextChanged
 import com.tv.player.BuildConfig
 import com.tv.player.core.AppUpdate
 import com.tv.player.core.Backup
+import com.tv.player.core.CrashLog
 import com.tv.player.core.Library
+import com.tv.player.core.LibrarySync
 import com.tv.player.core.Quark
 import com.tv.player.core.QuarkWeb
 import com.tv.player.core.Store
@@ -154,6 +156,21 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         parallelPrefetch.check(if (Store.parallelPrefetch()) R.id.prefetchOn else R.id.prefetchOff)
         parallelPrefetch.setOnCheckedStateChangeListener { _, ids -> Store.setParallelPrefetch(ids.firstOrNull() == R.id.prefetchOn) }
 
+        val dlna = view.findViewById<ChipGroup>(R.id.dlnaReceiver)
+        view.findViewById<TextView>(R.id.dlnaHint).text = "开启后，同一个 Wi-Fi 下的手机在视频 App（如哔哩哔哩）的投屏列表里能看到「TV Player（${android.os.Build.MODEL}）」，" +
+            "选它就把视频投到这里播放，手机上可以暂停、拖进度、调音量。只在 TV Player 打开着的时候能被找到；爱奇艺、腾讯视频等用自家协议投屏的 App 找不到这里。"
+        dlna.check(if (Store.dlnaReceiver(requireContext().isTv())) R.id.dlnaOn else R.id.dlnaOff)
+        dlna.setOnCheckedStateChangeListener { _, ids ->
+            val on = ids.firstOrNull() == R.id.dlnaOn
+            Store.setDlnaReceiver(on)
+            if (on) CastSession.startReceiver(requireContext()) else CastSession.stopReceiver()
+        }
+
+        view.findViewById<View>(R.id.frameRateBox).visibility = if (requireContext().isTv()) View.VISIBLE else View.GONE
+        val matchFrameRate = view.findViewById<ChipGroup>(R.id.matchFrameRate)
+        matchFrameRate.check(if (Store.matchFrameRate()) R.id.frameRateOn else R.id.frameRateOff)
+        matchFrameRate.setOnCheckedStateChangeListener { _, ids -> Store.setMatchFrameRate(ids.firstOrNull() == R.id.frameRateOn) }
+
         val hotLayout = view.findViewById<ChipGroup>(R.id.hotLayout)
         hotLayout.check(if (Store.hotLayout() == "rows") R.id.hotLayoutRows else R.id.hotLayoutTabs)
         hotLayout.setOnCheckedStateChangeListener { _, ids ->
@@ -226,6 +243,10 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 refreshInfo()
             }
         }
+        view.findViewById<View>(R.id.syncHost).setOnClickListener { hostSync() }
+        view.findViewById<View>(R.id.syncJoin).setOnClickListener { joinSync() }
+        view.findViewById<View>(R.id.crashView).setOnClickListener { showCrashLog() }
+        syncCrash()
         view.findViewById<View>(R.id.exportBtn).setOnClickListener { exportLauncher.launch("tv-player-backup.json") }
         view.findViewById<View>(R.id.restoreBtn).setOnClickListener { restoreLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) }
         view.findViewById<View>(R.id.clearHistory).setOnClickListener {
@@ -248,7 +269,125 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
 
     override fun onHiddenChanged(hidden: Boolean) {
         super.onHiddenChanged(hidden)
-        if (!hidden) refreshInfo()
+        if (!hidden) {
+            refreshInfo()
+            syncCrash()
+        }
+    }
+
+    /** 等另一台设备来同步：显示配对码，同步完提示，关掉对话框就停止。 */
+    private fun hostSync() {
+        val context = requireContext()
+        val main = android.os.Handler(android.os.Looper.getMainLooper())
+        val name = "TV Player（${android.os.Build.MODEL}）"
+        var dialog: androidx.appcompat.app.AlertDialog? = null
+        val host = LibrarySync.Host(
+            context, name,
+            onSynced = { f, h ->
+                main.post {
+                    dialog?.setMessage("同步完成：从对方收到 $f 条收藏、$h 条观看记录。可以关掉了。")
+                    refreshInfo()
+                }
+            },
+            onClosed = { main.post { dialog?.dismiss() } },
+        )
+        if (!host.start()) {
+            backupStatus.text = "没法开始等待同步，检查一下 Wi-Fi"
+            return
+        }
+        dialog = MaterialAlertDialogBuilder(context)
+            .setTitle("配对码  ${host.code}")
+            .setMessage("在另一台设备的 TV Player 里：设置 → 备份与恢复 → 同步另一台设备，选「$name」，输入上面的配对码。两台要连同一个 Wi-Fi。")
+            .setNegativeButton("关闭", null)
+            .show()
+        RemoteControl.cover(dialog) { host.stop() }
+    }
+
+    /** 找到等待同步的设备，输入配对码，双向合并。 */
+    private fun joinSync() {
+        val context = requireContext()
+        backupStatus.text = "正在找同一个 Wi-Fi 下等待同步的设备…"
+        viewLifecycleOwner.lifecycleScope.launch {
+            val peers = LibrarySync.discover(context)
+            if (peers.isEmpty()) {
+                backupStatus.text = "没找到。先在另一台设备上点「等待同步」，两台要连同一个 Wi-Fi"
+                return@launch
+            }
+            backupStatus.text = ""
+            if (peers.size == 1) askCode(peers[0])
+            else RemoteControl.cover(
+                MaterialAlertDialogBuilder(context)
+                    .setTitle("选一台设备")
+                    .setItems(peers.map { it.name }.toTypedArray()) { _, i -> askCode(peers[i]) }
+                    .show(),
+            )
+        }
+    }
+
+    private fun askCode(peer: LibrarySync.Peer) {
+        val context = requireContext()
+        val input = TextInputEditText(context).apply {
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            hint = "4 位配对码"
+        }
+        val box = android.widget.FrameLayout(context).apply {
+            val pad = context.dp(24)
+            setPadding(pad, context.dp(8), pad, 0)
+            addView(input)
+        }
+        RemoteControl.cover(
+            MaterialAlertDialogBuilder(context)
+                .setTitle("和「${peer.name}」同步")
+                .setView(box)
+                .setNegativeButton("取消", null)
+                .setPositiveButton("同步") { _, _ ->
+                    backupStatus.text = "正在同步…"
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        backupStatus.text = LibrarySync.sync(peer, input.text?.toString().orEmpty())
+                        refreshInfo()
+                    }
+                }
+                .show(),
+        )
+    }
+
+    /** 有崩溃记录才显示这一块。 */
+    private fun syncCrash() {
+        val v = view ?: return
+        val count = CrashLog.count()
+        val status = v.findViewById<TextView>(R.id.crashStatus)
+        val button = v.findViewById<View>(R.id.crashView)
+        status.text = if (requireContext().isTv()) "本机记录了 $count 次崩溃。也可以在「用手机输入或遥控电视」扫码后，在手机网页里查看和复制"
+        else "本机记录了 $count 次崩溃"
+        status.visibility = if (count > 0) View.VISIBLE else View.GONE
+        button.visibility = status.visibility
+    }
+
+    private fun showCrashLog() {
+        val context = requireContext()
+        val text = TextView(context).apply {
+            text = CrashLog.read().ifEmpty { "没有崩溃记录" }
+            textSize = 11f
+            typeface = android.graphics.Typeface.MONOSPACE
+            setTextIsSelectable(!context.isTv())
+            val pad = (16 * resources.displayMetrics.density).toInt()
+            setPadding(pad, pad / 2, pad, pad / 2)
+        }
+        // 电视上滚动区域要能拿到焦点，上下键才滚得动
+        val scroll = android.widget.ScrollView(context).apply { isFocusable = true; addView(text) }
+        val builder = MaterialAlertDialogBuilder(context)
+            .setTitle("崩溃日志")
+            .setView(scroll)
+            .setNegativeButton("清空") { _, _ ->
+                CrashLog.clear()
+                syncCrash()
+            }
+            .setPositiveButton("关闭", null)
+        if (!context.isTv()) builder.setNeutralButton("复制") { _, _ ->
+            val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+            clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("崩溃日志", CrashLog.read()))
+        }
+        RemoteControl.cover(builder.show())
     }
 
     private fun refreshInfo() {

@@ -76,7 +76,6 @@ import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
-import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -87,6 +86,7 @@ import androidx.media3.exoplayer.source.preload.TargetPreloadStatusControl
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import androidx.media3.ui.SubtitleView
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -105,15 +105,19 @@ import com.tv.player.core.Epg
 import com.tv.player.core.DlnaDevice
 import com.tv.player.core.Http
 import com.tv.player.core.LineProbe
+import com.tv.player.core.NetStore
 import com.tv.player.core.Library
 import com.tv.player.core.Quark
 import com.tv.player.core.QuarkWeb
 import com.tv.player.core.Resolve
 import com.tv.player.core.CachePolicy
+import com.tv.player.core.Downloads
 import com.tv.player.core.FallbackLatch
+import com.tv.player.core.FrameRateMatch
 import com.tv.player.core.PrefetchPolicy
 import com.tv.player.core.PrefetchScheduler
 import com.tv.player.core.PlayCache
+import com.tv.player.core.SeekRamp
 import com.tv.player.core.StallPolicy
 import com.tv.player.core.Store
 import com.tv.player.core.Subtitles
@@ -150,6 +154,11 @@ class PlayActivity : BaseActivity() {
         private const val STALL_MS = 20_000L
         private const val SAVE_MS = 10_000L
         private const val MAX_SKIP = 300
+        private const val NEXT_CARD_MS = 10_000L // 离一集结束还有这么久时提示下一集
+        private const val NEXT_CARD_MIN_MS = 5 * 60_000L // 短于这个的（短剧）照旧直接连播，不弹卡片
+        private const val SUB_STEP_MS = 500L
+        private const val MAX_SUB_OFFSET_MS = 300_000L
+        private val SUB_SCALES = listOf(0.8f, 1f, 1.3f, 1.6f)
         private const val EP_GROUP = 30
         private const val RESCUE_MS = 4_000L
         private const val PRELOAD_AFTER_MS = 2_500L // how long an episode plays before its neighbours are loaded ahead
@@ -264,6 +273,25 @@ class PlayActivity : BaseActivity() {
     private var replayMode = false // a past programme is playing in place of the live picture; "回到直播" leaves it
     private var outroDone = false
     private var speedBoost = false
+
+    // 遥控器按住左右键：按住期间只挪目标位置，松手再跳一次（见 SeekRamp）；-1 表示没在按住
+    private var seekPending = -1L
+    private var seekFrom = 0L
+    private var seekLastAt = 0L
+    private var seekDownAt = -1L // 这次按住的 downTime：第一下按键被系统吃掉（如刚退出触摸模式）时据此补上起点
+    private val commitSeek = Runnable { finishHeldSeek() }
+
+    // 一集快放完时的「下一集」提示卡片；点了取消，这一集放完就不自动连播
+    private var nextCard: View? = null
+    private var nextCancelled = false
+
+    // 导入字幕的原文件，和现在的时间偏移（毫秒，正数＝字幕晚出现）
+    private var extSubtitleBase: Uri? = null
+    private var subOffsetMs = 0L
+    private val applySubOffset = Runnable { shiftSubtitle() }
+
+    // 片源没写帧率时，从解码出来的帧时间戳估（播放线程上喂，见 FrameRateMatch.Estimator）
+    private val frameEstimator = FrameRateMatch.Estimator()
 
     // Stalls in this viewing: the more there were, the longer playback gathers buffer before resuming (see StallPolicy).
     private val stallPolicy = StallPolicy()
@@ -411,14 +439,15 @@ class PlayActivity : BaseActivity() {
             stallPolicy,
         )
         // Drive addresses (web login) need the session cookies on every request to the drive's hosts.
-        val network = ResolvingDataSource.Factory(DefaultDataSource.Factory(this, httpFactory)) { spec ->
-            val extra = spec.uri.host?.let(QuarkWeb::headersFor)
+        // 网络存储：SMB 文件走自己的数据源，WebDAV 文件的请求带上账号
+        val network = ResolvingDataSource.Factory(SmbAwareDataSource.Factory(DefaultDataSource.Factory(this, httpFactory))) { spec ->
+            val extra = spec.uri.host?.let(QuarkWeb::headersFor) ?: NetStore.headersFor(spec.uri.toString())
             if (extra == null) spec else spec.withRequestHeaders(spec.httpRequestHeaders + extra)
         }
         // On-demand video is cached on disk as it plays (and as the next episode is loaded ahead); live is not, and neither
         // are a drive's files: their addresses expire and need the login.
         // A drive's files (either kind of login) are left alone as a whole: one film would fill the cache on its own.
-        val fromDrive = !isLive && items.any { it.sourceKey == Quark.SOURCE_KEY || it.sourceKey == QuarkWeb.SOURCE_KEY }
+        val fromDrive = !isLive && items.any { it.sourceKey == Quark.SOURCE_KEY || it.sourceKey == QuarkWeb.SOURCE_KEY || it.sourceKey == NetStore.SOURCE_KEY }
         val bypass = { uri: Uri -> !CachePolicy.cacheable(uri.scheme, uri.path) || uri.host?.let(QuarkWeb::headersFor) != null }
         val dataSource: DataSource.Factory = if (isLive || fromDrive) network else {
             val cache = PlayCache.get(this)
@@ -474,8 +503,8 @@ class PlayActivity : BaseActivity() {
         )
             .setMediaSourceFactory(mediaSourceFactory)
             .setLoadControl(loadControl)
-            // A phone whose preferred video decoder fails to start falls back to another one instead of failing the line.
-            .setRenderersFactory(DefaultRenderersFactory(this).setEnableDecoderFallback(true))
+            // 视频解码器起不来时换一个；没有 AC3 等音频硬解时用 ffmpeg 软解（见 AudioFallbackRenderersFactory）
+            .setRenderersFactory(AudioFallbackRenderersFactory(this))
         player = preloadBuilder
             .buildExoPlayer(
                 ExoPlayer.Builder(this)
@@ -490,6 +519,10 @@ class PlayActivity : BaseActivity() {
                 it.playWhenReady = true
                 it.setPlaybackSpeed(if (isLive) 1f else Store.playSpeed())
                 it.setSeekParameters(SeekParameters.CLOSEST_SYNC) // swipe and arrow seeks land on the nearest keyframe: much quicker
+                // 电视上自动匹配帧率：片源写了帧率在 onVideoSizeChanged 里处理，没写的在这里逐帧估
+                if (isTv && Store.matchFrameRate()) it.setVideoFrameMetadataListener { presentationTimeUs, _, format, _ ->
+                    if (format.frameRate <= 0f) frameEstimator.add(presentationTimeUs)?.let { fps -> handler.post { matchFrameRate(fps) } }
+                }
             }
         controlPlayer = EpisodePlayer(player!!, ::canStepEpisode, ::stepEpisode)
         preloadManager = preloadBuilder.build().also { manager ->
@@ -510,7 +543,9 @@ class PlayActivity : BaseActivity() {
         applySystemBars()
 
         onBackPressedDispatcher.addCallback(this) {
-            if (vfullShown) {
+            if (isTv && nextCard?.visibility == View.VISIBLE) {
+                cancelNext()
+            } else if (vfullShown) {
                 setPortraitFull(false)
             } else if (overlay) {
                 // TV: back first hides the control bar, then returns to the details page (on demand) or leaves.
@@ -637,6 +672,8 @@ class PlayActivity : BaseActivity() {
             syncPullArrow()
         }
         setupGestures()
+        applySubtitleStyle()
+        setupNextCard()
         if (overlay) {
             updatePlayPause()
             setPanelVisible(true)
@@ -930,6 +967,7 @@ class PlayActivity : BaseActivity() {
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             prefetchRoot = mediaItem?.localConfiguration?.uri?.toString()
             prefetch?.reset() // what was fetched ahead for the old stream goes now, not when the new one first asks
+            frameEstimator.reset()
         }
 
         override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
@@ -982,7 +1020,8 @@ class PlayActivity : BaseActivity() {
                         return
                     }
                     val count = details[curSrc]?.lines?.getOrNull(curLine)?.episodes?.size ?: 0
-                    if (curEp + 1 < count) selectEpisode(curEp + 1)
+                    if (nextCancelled) setInfo("这一集播完了，可以在选集里挑下一集")
+                    else if (curEp + 1 < count) selectEpisode(curEp + 1)
                 }
             }
         }
@@ -997,6 +1036,7 @@ class PlayActivity : BaseActivity() {
                 Store.bumpVfullTips()
                 flashHud("下拉画面，竖屏全屏", 2_500)
             }
+            player?.videoFormat?.frameRate?.takeIf { it > 0f }?.let(::matchFrameRate)
             resolution = qualityLabel(videoSize.height)
             if (!replayMode) lineQuality[lineKey()] = resolution // a replayed programme's picture is not a line's quality
             if (player?.playbackState == Player.STATE_READY) setInfo(playingText())
@@ -1084,6 +1124,10 @@ class PlayActivity : BaseActivity() {
         handler.removeCallbacks(backgroundProbe)
         introDone = false
         outroDone = false
+        nextCancelled = false
+        nextCard?.visibility = View.GONE
+        seekPending = -1
+        handler.removeCallbacks(commitSeek)
         allFailed = false
         updateKeepScreen()
         tried.clear()
@@ -1359,6 +1403,7 @@ class PlayActivity : BaseActivity() {
         // A drive folder: its video files are the episodes.
         if (item.sourceKey == Quark.SOURCE_KEY) return runCatching { withTimeoutOrNull(15_000) { Quark.detail(item.id, item.title) } }.getOrNull()
         if (item.sourceKey == QuarkWeb.SOURCE_KEY) return runCatching { withTimeoutOrNull(15_000) { QuarkWeb.detail(item.id, item.title) } }.getOrNull()
+        if (item.sourceKey == NetStore.SOURCE_KEY) return runCatching { withTimeoutOrNull(20_000) { NetStore.detail(item.id, item.title) } }.getOrNull()
         val source = sources[item.sourceKey] ?: return null
         return try {
             withTimeoutOrNull(12_000) { Cms.detail(source, item.id) }.also { Log.d("TVP", "detail ${item.sourceName}: ${if (it == null) "none" else "ok"}") }
@@ -1704,13 +1749,14 @@ class PlayActivity : BaseActivity() {
                     val count = details[curSrc]?.lines?.getOrNull(curLine)?.episodes?.size ?: 0
                     if (sleepAfterEp) {
                         sleepNow("这一集播完了，已按睡眠定时停止")
-                    } else if (curEp + 1 < count) {
+                    } else if (curEp + 1 < count && !nextCancelled) {
                         flashHud("已跳过片尾，播放下一集")
                         selectEpisode(curEp + 1)
                     }
                 }
             }
             if (overlay && panel?.visibility == View.VISIBLE) updateProgress()
+            updateNextCard()
             if (vfullShown) syncThinProgress()
             // The programme guide moves on every few minutes.
             if (isLive && started && tick % 30 == 0) setInfo(playingText())
@@ -1881,12 +1927,37 @@ class PlayActivity : BaseActivity() {
         showTracks()
         subtitleValue.setOnClickListener { chooseTrack(C.TRACK_TYPE_TEXT, "字幕", ::showTracks) }
         audioValue.setOnClickListener { chooseTrack(C.TRACK_TYPE_AUDIO, "音轨", ::showTracks) }
+        fill(view.findViewById(R.id.subSizeGroup), listOf("小", "标准", "大", "特大"), Store.subtitleSize()) {
+            Store.setSubtitleSize(it)
+            applySubtitleStyle()
+        }
+        // 时间偏移只对导入的字幕：片源自带的字幕没法改时间轴
+        if (extSubtitleBase != null) {
+            view.findViewById<View>(R.id.subOffsetBox).visibility = View.VISIBLE
+            val offsetLabel = view.findViewById<TextView>(R.id.subOffsetLabel)
+            fun step(delta: Long) {
+                subOffsetMs = (subOffsetMs + delta).coerceIn(-MAX_SUB_OFFSET_MS, MAX_SUB_OFFSET_MS)
+                offsetLabel.text = subOffsetText()
+                handler.removeCallbacks(applySubOffset)
+                handler.postDelayed(applySubOffset, 800)
+            }
+            offsetLabel.text = subOffsetText()
+            stepper(view.findViewById(R.id.subOffsetMinus)) { step(-SUB_STEP_MS) }
+            stepper(view.findViewById(R.id.subOffsetPlus)) { step(SUB_STEP_MS) }
+        }
         view.findViewById<View>(R.id.importSub).setOnClickListener {
             try {
                 pickSubtitle.launch(arrayOf("*/*"))
             } catch (e: ActivityNotFoundException) {
                 toast("这台设备没有文件选择器，没法导入字幕")
             }
+        }
+
+        // 离线下载：手机、平板上的点播（网盘和网络存储的文件本来就能直接看，不下）
+        view.findViewById<View>(R.id.downloadEp).apply {
+            val fromDrive = items.any { it.sourceKey == Quark.SOURCE_KEY || it.sourceKey == QuarkWeb.SOURCE_KEY || it.sourceKey == NetStore.SOURCE_KEY }
+            visibility = if (!isTv && !isLive && !replayMode && !fromDrive) View.VISIBLE else View.GONE
+            setOnClickListener { downloadEpisode() }
         }
 
         // programme replay: only for a live channel that offers playback of past programmes
@@ -2060,6 +2131,7 @@ class PlayActivity : BaseActivity() {
 
     /** In the small floating window only the picture is left. */
     private fun applyPip(inPip: Boolean) {
+        if (inPip) nextCard?.visibility = View.GONE
         val gone = if (inPip) View.GONE else View.VISIBLE
         for (id in listOf(R.id.topbar, R.id.content, R.id.back, R.id.title, R.id.cast, R.id.playSettings)) findViewById<View?>(id)?.visibility = gone
         // The tall full screen's episode button is shown only when there is more than one episode: refreshLists decides.
@@ -2124,7 +2196,10 @@ class PlayActivity : BaseActivity() {
                 return@launch
             }
             extSubtitle = file
+            extSubtitleBase = file
             extSubtitleMime = mime
+            subOffsetMs = 0
+            handler.removeCallbacks(applySubOffset)
             // Subtitles may have been turned off by hand: the new one must show.
             player?.let { p -> p.trackSelectionParameters = p.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false).build() }
             reloadStream()
@@ -2330,6 +2405,13 @@ class PlayActivity : BaseActivity() {
 
     /** With the picture focused and the controller hidden: left/right seek 10s, up/down jump to the side panel. */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        // 按住左右键快进，松手时才真正跳过去
+        if (seekPending >= 0 && event.action == KeyEvent.ACTION_UP &&
+            (event.keyCode == KeyEvent.KEYCODE_DPAD_LEFT || event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT)
+        ) {
+            finishHeldSeek()
+            return true
+        }
         // Remote media keys (the picture has no on-screen controller to forward them).
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
             val p = player
@@ -2370,6 +2452,11 @@ class PlayActivity : BaseActivity() {
                     KeyEvent.KEYCODE_DPAD_DOWN -> !isLive
                     else -> false
                 }
+                // 「下一集」卡片在的时候，确认键就是立即播放
+                if (event.keyCode in OK_KEYS && nextCard?.visibility == View.VISIBLE) {
+                    if (event.repeatCount == 0) playNextNow()
+                    return true
+                }
                 if (!isLive && event.keyCode in OK_KEYS) {
                     // Holding OK repeats the key: only the first press toggles. playWhenReady (not isPlaying) so a press
                     // while buffering pauses instead of "playing" again.
@@ -2397,11 +2484,35 @@ class PlayActivity : BaseActivity() {
                 KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
                     if (canSeek()) {
                         player?.takeIf { it.duration > 0 }?.let { p ->
-                            val delta = if (event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) 10_000L else -10_000L
-                            val target = (p.currentPosition + delta).coerceIn(0L, maxOf(0L, p.duration))
-                            p.seekTo(target)
-                            playerView.hideController()
-                            flashHud(if (delta > 0) "快进 10 秒  ${formatTime(target)}" else "快退 10 秒  ${formatTime(target)}")
+                            val forward = event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT
+                            if (event.repeatCount == 0) {
+                                finishHeldSeek() // 换了方向：先把上一次按住攒下的跳完
+                                seekFrom = p.currentPosition
+                                seekLastAt = event.eventTime
+                                seekDownAt = event.downTime
+                                val delta = if (forward) SeekRamp.TAP_MS else -SeekRamp.TAP_MS
+                                val target = (p.currentPosition + delta).coerceIn(0L, maxOf(0L, p.duration))
+                                p.seekTo(target)
+                                playerView.hideController()
+                                flashHud(if (delta > 0) "快进 10 秒  ${formatTime(target)}" else "快退 10 秒  ${formatTime(target)}")
+                            } else {
+                                // 按住不放：只挪目标、显示要跳到哪，不每次都 seek（每次 seek 都要重新请求分片）；
+                                // 松手时跳，万一收不到松手事件，1 秒没有新按键也跳
+                                if (event.downTime != seekDownAt) {
+                                    seekFrom = p.currentPosition
+                                    seekLastAt = event.downTime
+                                    seekDownAt = event.downTime
+                                }
+                                if (seekPending < 0) seekPending = p.currentPosition
+                                // 往前最多到结尾前 15 秒：一下冲到结尾会直接换集，「下一集」卡片都来不及出现
+                                val limit = if (forward) maxOf(p.currentPosition, p.duration - 15_000L) else p.duration
+                                seekPending = SeekRamp.advance(seekPending, forward, event.eventTime - event.downTime, event.eventTime - seekLastAt, limit)
+                                seekLastAt = event.eventTime
+                                val moved = seekPending - seekFrom
+                                flashHud("${if (moved >= 0) "快进" else "快退"} ${formatTime(abs(moved))}    ${formatTime(seekPending)} / ${formatTime(p.duration)}", 1_500)
+                                handler.removeCallbacks(commitSeek)
+                                handler.postDelayed(commitSeek, 1_000)
+                            }
                         }
                         return true
                     } else if (event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT && !overlay && panel?.visibility == View.VISIBLE) {
@@ -2422,6 +2533,175 @@ class PlayActivity : BaseActivity() {
             }
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    /** 按住快进 / 快退松手后，跳到攒下的位置。 */
+    private fun finishHeldSeek() {
+        handler.removeCallbacks(commitSeek)
+        val target = seekPending
+        if (target < 0) return
+        seekPending = -1
+        Log.d("TVP", "held seek: ${formatTime(seekFrom)} -> ${formatTime(target)}")
+        player?.seekTo(target)
+        flashHud("跳到 ${formatTime(target)}")
+    }
+
+    // ---- 下一集提示 ------------------------------------------------------------------------------------------------
+
+    /**
+     * 「下一集」卡片直接挂在 PlayerView（本身是 FrameLayout）最上层，换布局时跟着它一起重建。不放进 overlayFrameLayout：
+     * 那一层在控制器下面，手机上点按钮会被控制器挡住。
+     */
+    private fun setupNextCard() {
+        val frame: FrameLayout = playerView
+        val card = layoutInflater.inflate(R.layout.view_next_episode, frame, false)
+        card.findViewById<View>(R.id.nextNow).setOnClickListener { playNextNow() }
+        card.findViewById<View>(R.id.nextCancel).setOnClickListener { cancelNext() }
+        // 电视上用确认键 / 返回键，不放按钮（放了也拿不到焦点）
+        if (isTv) card.findViewById<View>(R.id.nextButtons).visibility = View.GONE
+        // 放右上角：底部是电视的控制栏和手机的进度条；电视要留出安全区
+        val (side, top) = if (isTv) dp(48) to dp(27) else dp(12) to dp(12)
+        frame.addView(card, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.END).apply {
+            setMargins(side, top, side, top)
+        })
+        nextCard = card
+        updateNextCard()
+    }
+
+    /** 离这一集结束（设了跳过片尾就是片尾开始处）不到 10 秒时显示倒计时，其余时候藏起来。每秒由 ticker 调一次。 */
+    private fun updateNextCard() {
+        val card = nextCard ?: return
+        val p = player
+        val next = details[curSrc]?.lines?.getOrNull(curLine)?.episodes?.getOrNull(curEp + 1)
+        var left = Long.MAX_VALUE
+        if (p != null && p.duration > 0) {
+            val outro = if (key.isEmpty()) 0 else Store.skip(key).second
+            val end = if (outro > 0 && p.duration > (outro + 60) * 1000L) p.duration - outro * 1000L else p.duration
+            left = ((end - p.currentPosition) / p.playbackParameters.speed.coerceAtLeast(0.1f)).toLong()
+        }
+        val show = p != null && next != null && !isLive && !replayMode && started && !nextCancelled && !sleepAfterEp &&
+            !isInPictureInPictureMode && (overlay || !isTv) && !vfullShown && !(overlay && panel?.visibility == View.VISIBLE) &&
+            p.duration >= NEXT_CARD_MIN_MS &&
+            p.playbackState != Player.STATE_ENDED && seekPending < 0 && left in 1..NEXT_CARD_MS
+        if (show) {
+            card.findViewById<TextView>(R.id.nextTitle).text = "下一集：${next!!.name}"
+            val secs = (left + 999) / 1000
+            card.findViewById<TextView>(R.id.nextHint).text = if (isTv) "$secs 秒后自动播放 · 确认键立即播放 · 返回键取消" else "$secs 秒后自动播放"
+        }
+        if (show && card.visibility != View.VISIBLE) Log.d("TVP", "next card: ${next?.name}")
+        card.visibility = if (show) View.VISIBLE else View.GONE
+    }
+
+    private fun playNextNow() {
+        nextCard?.visibility = View.GONE
+        val count = details[curSrc]?.lines?.getOrNull(curLine)?.episodes?.size ?: 0
+        if (curEp + 1 >= count) return
+        selectEpisode(curEp + 1)
+        flashHud(epName(), 1_200)
+    }
+
+    private fun cancelNext() {
+        nextCancelled = true
+        nextCard?.visibility = View.GONE
+        Log.d("TVP", "next card cancelled")
+        flashHud("这一集放完后不自动播放下一集", 1_800)
+    }
+
+    // ---- 离线下载 ------------------------------------------------------------------------------------------------
+
+    /** 把正在播的这一集加入下载。多码率的 m3u8 只下一种清晰度（不超过 1080P），不然每种都下一遍。 */
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    private fun downloadEpisode() {
+        val url = resolvedUrl
+        if (url == null || !started) {
+            toast("还没开始播放，等能播了再下载")
+            return
+        }
+        val id = "$key#$curEp"
+        val info = Downloads.Info(title, epName(), pic)
+        // Android 13 起要授权才能在通知栏看到下载进度（不授权也照样下）
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7)
+        }
+        val params = androidx.media3.exoplayer.offline.DownloadHelper.getDefaultTrackSelectorParameters(this)
+            .buildUpon().setMaxVideoSize(1920, 1080).build()
+        val helper = androidx.media3.exoplayer.offline.DownloadHelper.forMediaItem(
+            Downloads.mediaItem(url), params, AudioFallbackRenderersFactory(this), Downloads.playbackSource(this),
+        )
+        toast("正在准备下载…")
+        helper.prepare(object : androidx.media3.exoplayer.offline.DownloadHelper.Callback {
+            override fun onPrepared(h: androidx.media3.exoplayer.offline.DownloadHelper) {
+                val request = h.getDownloadRequest(id, info.toBytes())
+                h.release()
+                androidx.media3.exoplayer.offline.DownloadService.sendAddDownload(this@PlayActivity, TvpDownloadService::class.java, request, false)
+                // 之前因为前台服务超时暂停过的话，一起恢复
+                androidx.media3.exoplayer.offline.DownloadService.sendResumeDownloads(this@PlayActivity, TvpDownloadService::class.java, false)
+                toast(if (Store.downloadOnMetered()) "已加入下载，在「我的」→「下载」里查看" else "已加入下载（只在 Wi-Fi 下下载），在「我的」→「下载」里查看")
+            }
+
+            override fun onPrepareError(h: androidx.media3.exoplayer.offline.DownloadHelper, e: java.io.IOException) {
+                h.release()
+                toast("这一集没法下载：${e.message ?: "读不到视频信息"}")
+            }
+        })
+    }
+
+    // ---- 自动匹配帧率 ----------------------------------------------------------------------------------------------
+
+    /** 电视上把刷新率切到片源帧率的整数倍（设置里开了才做）。离开播放页后系统自己恢复原来的刷新率。 */
+    private fun matchFrameRate(fps: Float) {
+        if (!isTv || !Store.matchFrameRate() || isFinishing) return
+        val display = (if (Build.VERSION.SDK_INT >= 30) display else @Suppress("DEPRECATION") windowManager.defaultDisplay) ?: return
+        val now = display.mode
+        val modes = display.supportedModes.map { FrameRateMatch.Mode(it.modeId, it.physicalWidth, it.physicalHeight, it.refreshRate) }
+        val target = FrameRateMatch.pick(fps, FrameRateMatch.Mode(now.modeId, now.physicalWidth, now.physicalHeight, now.refreshRate), modes)
+        Log.d("TVP", "frame rate ${"%.3f".format(Locale.US, fps)} fps on ${now.refreshRate} Hz: " +
+            (target?.let { id -> "switch to ${modes.first { it.id == id }.refreshRate} Hz" } ?: "keep (${modes.size} modes)"))
+        if (target == null) {
+            // 现在的刷新率不合适、又没有合适的（比如上一集切到了 24Hz，这一集是 25 帧而电视没有 50Hz）：交还给系统默认
+            if (!FrameRateMatch.fits(now.refreshRate, fps) && window.attributes.preferredDisplayModeId != 0) {
+                window.attributes = window.attributes.apply { preferredDisplayModeId = 0 }
+            }
+            return
+        }
+        if (window.attributes.preferredDisplayModeId == target) return
+        window.attributes = window.attributes.apply { preferredDisplayModeId = target }
+    }
+
+    // ---- 字幕大小和时间 ----------------------------------------------------------------------------------------------
+
+    /** 字幕大小按设置放大缩小，并叠加系统无障碍里的字幕缩放（PlayerView 默认就是这么算的）。 */
+    private fun applySubtitleStyle() {
+        val view = playerView.subtitleView ?: return
+        val size = Store.subtitleSize()
+        val captioning = getSystemService(android.view.accessibility.CaptioningManager::class.java)
+        val user = if (captioning?.isEnabled == true) captioning.fontScale else 1f
+        view.setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * SUB_SCALES[size] * user)
+        // 不是「标准」时，字幕文件自带的字号也不用，按这里选的来
+        view.setApplyEmbeddedFontSizes(size == 1)
+    }
+
+    private fun subOffsetText() = when {
+        subOffsetMs == 0L -> "不调整"
+        subOffsetMs > 0 -> "延后 %.1f 秒".format(Locale.US, subOffsetMs / 1000f)
+        else -> "提前 %.1f 秒".format(Locale.US, -subOffsetMs / 1000f)
+    }
+
+    /** 按现在的偏移重写一份导入的字幕并重新加载（停手 0.8 秒后才做，按住 + / − 连调时只重载一次）。 */
+    private fun shiftSubtitle() {
+        val base = extSubtitleBase ?: return
+        val offset = subOffsetMs
+        val mime = extSubtitleMime
+        val g = gen
+        lifecycleScope.launch {
+            val shifted = withContext(Dispatchers.IO) { runCatching { Subtitles.shiftedCopy(base, mime, offset) }.getOrNull() }
+            // 这期间又导入了别的字幕或又调了时间：以新的为准
+            if (shifted == null || base != extSubtitleBase || offset != subOffsetMs) return@launch
+            extSubtitle = shifted
+            // 这期间换了集或线路：新的那条还没起播就不重载（它起播时用的就是新字幕），已经在播才重载
+            if (g == gen || started) reloadStream()
+            flashHud("字幕${subOffsetText()}", 1_200)
+        }
     }
 
     // ---- gestures: swipe to seek / brightness / volume, double tap to pause, long press for 2x ------------------

@@ -55,6 +55,39 @@
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
 
+        <!-- 手机投屏过来的视频（DLNA 接收）：再投一个时复用同一页 -->
+        <activity
+            android:name=".ui.CastActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
+            android:exported="false"
+            android:launchMode="singleTask" />
+
+        <!-- 离线下载（Media3 DownloadService）：系统重启它时用 RESTART 这个动作 -->
+        <service
+            android:name=".ui.TvpDownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync">
+            <intent-filter>
+                <action android:name="androidx.media3.exoplayer.downloadService.action.RESTART" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </service>
+
+        <activity
+            android:name=".ui.DownloadsActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
+            android:exported="false" />
+
+        <activity
+            android:name=".ui.BrowseActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
+            android:exported="false" />
+
+        <activity
+            android:name=".ui.NetStoreActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
+            android:exported="false" />
+
         <activity
             android:name=".ui.SourcesActivity"
             android:exported="false" />

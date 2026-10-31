@@ -20,6 +20,12 @@ import kotlinx.coroutines.launch
 class MainActivity : BaseActivity() {
     companion object {
         private const val EXTRA_OPEN_KEY = "open_key"
+        private const val EXTRA_SEARCH = "search"
+
+        /** 回到发现页并在所有源里搜 [keyword]：分类筛选页点了一部片时用。 */
+        fun searchIntent(context: Context, keyword: String): Intent =
+            Intent(context, MainActivity::class.java).putExtra(EXTRA_SEARCH, keyword)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
 
         /** Opens the series [key] straight away: used by notifications and the TV home screen's continue-watching row. */
         fun openIntent(context: Context, key: String): Intent =
@@ -109,6 +115,12 @@ class MainActivity : BaseActivity() {
 
     /** A notification or a home-screen tile asked for a series: open its details page (playback resumes from there). */
     private fun openFrom(intent: Intent?) {
+        intent?.getStringExtra(EXTRA_SEARCH)?.let { keyword ->
+            intent.removeExtra(EXTRA_SEARCH)
+            // 页面刚重建时发现页可能还没建好：等这一轮界面初始化完再交给它（它没建好也会先记下）
+            window.decorView.post { pushSearch(keyword) }
+            return
+        }
         val key = intent?.getStringExtra(EXTRA_OPEN_KEY) ?: return
         intent.removeExtra(EXTRA_OPEN_KEY)
         val entry = Library.progress(key) ?: Library.favorites().firstOrNull { it.key == key } ?: return

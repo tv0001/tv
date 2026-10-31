@@ -30,6 +30,7 @@ import com.tv.player.core.ResultFilter
 import com.tv.player.core.Search
 import com.tv.player.core.Smart
 import com.tv.player.core.Store
+import com.tv.player.core.Suggest
 import com.tv.player.data.VodGroup
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -62,8 +63,21 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
     private var raw: List<VodGroup> = emptyList()
     private var keyword = ""
 
+    // 搜索联想和电视上的首字母键盘
+    private lateinit var suggestBox: View
+    private lateinit var suggestChips: ChipGroup
+    private lateinit var keyboard: android.widget.GridLayout
+    private var suggestJob: Job? = null
+    private var suggestions: List<String> = emptyList()
+    private var suggestedFor = "" // suggestions 是按哪段文字给的
+    private var quietFocus = false // 程序把焦点挪回搜索框时，不要因此弹出键盘
+    private var pendingSearch: String? = null // 页面还没建好时收到的搜索（从分类筛选页回来）
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         query = view.findViewById(R.id.query)
+        suggestBox = view.findViewById(R.id.suggestBox)
+        suggestChips = view.findViewById(R.id.suggest)
+        keyboard = view.findViewById(R.id.keyboard)
         status = view.findViewById(R.id.status)
         progress = view.findViewById(R.id.progress)
         historyBox = view.findViewById(R.id.historyBox)
@@ -115,8 +129,19 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
             visibility = if (requireContext().isTv()) View.VISIBLE else View.GONE
             setOnClickListener { PhonePush.show(requireActivity() as androidx.appcompat.app.AppCompatActivity) { runSearch(it) } }
         }
+        view.findViewById<View>(R.id.browse).setOnClickListener { BrowseActivity.start(requireContext()) }
         val clear = view.findViewById<View>(R.id.clear)
-        query.doAfterTextChanged { clear.visibility = if (it.isNullOrEmpty()) View.GONE else View.VISIBLE }
+        query.doAfterTextChanged {
+            clear.visibility = if (it.isNullOrEmpty()) View.GONE else View.VISIBLE
+            updateSuggestions(it?.toString().orEmpty())
+        }
+        if (requireContext().isTv()) {
+            // 电视上点搜索框弹出下面的首字母键盘，不弹系统输入法（键盘上有「系统键盘」可以切过去输中文）
+            query.showSoftInputOnFocus = false
+            query.setOnClickListener { showKeyboard(true) }
+            query.setOnFocusChangeListener { _, has -> if (has && !quietFocus) showKeyboard(true) }
+            buildKeyboard()
+        }
         clear.setOnClickListener {
             query.text.clear()
             reset()
@@ -136,8 +161,15 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
                 loadHot(force = true)
             }
         }
-        if (requireContext().isTv()) view.viewTreeObserver.addOnGlobalFocusChangeListener { _, _ -> syncHistory() }
+        if (requireContext().isTv()) view.viewTreeObserver.addOnGlobalFocusChangeListener { _, _ ->
+            syncHistory()
+            syncKeyboard()
+        }
         reset()
+        pendingSearch?.let {
+            pendingSearch = null
+            runSearch(it)
+        }
     }
 
     /**
@@ -145,10 +177,131 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
      * 清空了返回 true。手机上不处理，始终返回 false。
      */
     fun clearOnBack(): Boolean {
-        if (view == null || !requireContext().isTv() || query.text.isEmpty()) return false
+        if (view == null || !requireContext().isTv()) return false
+        if (query.text.isEmpty()) {
+            // 没字但首字母键盘开着：先收起键盘
+            if (keyboard.visibility != View.VISIBLE) return false
+            showKeyboard(false)
+            return true
+        }
         query.text.clear()
         reset()
         return true
+    }
+
+    // ---- 搜索联想 ------------------------------------------------------------------------------------------------
+
+    /** 本地的片名：热播榜、观看记录、收藏、搜索历史。 */
+    private fun suggestPool(): List<String> =
+        hotSections.flatMap { s -> s.items.map { it.title } } + Library.history(100).map { it.title } + Library.favorites().map { it.title } + Store.history()
+
+    /** 输入停 0.25 秒后更新联想：先给本地的，中文再补豆瓣的。搜索进行中不打扰。 */
+    private fun updateSuggestions(text: String) {
+        suggestJob?.cancel()
+        if (text.isBlank() || searching && text == keyword) {
+            showSuggestions(emptyList())
+            return
+        }
+        suggestJob = viewLifecycleOwner.lifecycleScope.launch {
+            kotlinx.coroutines.delay(250)
+            val local = withContext(Dispatchers.Default) { Suggest.local(text, suggestPool()) }
+            showSuggestions(local)
+            val remote = runCatching { Suggest.douban(text) }.getOrDefault(emptyList())
+            if (remote.isNotEmpty()) showSuggestions((local + remote).distinct().filter { it != text.trim() }.take(10))
+        }
+    }
+
+    private fun showSuggestions(list: List<String>, forText: String = query.text.toString()) {
+        if (view == null) return
+        suggestions = list
+        suggestedFor = forText
+        suggestChips.removeAllViews()
+        list.forEach { title ->
+            suggestChips.addView(Chip(requireContext()).apply {
+                text = title
+                textSize = 13f
+                chipMinHeight = requireContext().dp(34).toFloat()
+                setOnClickListener {
+                    query.setText(title)
+                    search(title)
+                }
+            })
+        }
+        suggestBox.visibility = if (list.isEmpty()) View.GONE else View.VISIBLE
+    }
+
+    // ---- 电视上的首字母键盘 --------------------------------------------------------------------------------------
+
+    /** A–Z、0–9，加上删除、清空、系统键盘、搜索，一排 10 个。 */
+    private fun buildKeyboard() {
+        val ctx = requireContext()
+        val keys = ('A'..'Z').map { it.toString() } + ('0'..'9').map { it.toString() } + listOf("删除", "清空", "系统键盘", "搜索")
+        keyboard.removeAllViews()
+        keys.forEach { k ->
+            val button = layoutInflater.inflate(if (k == "搜索") R.layout.item_key_primary else R.layout.item_key, keyboard, false) as com.google.android.material.button.MaterialButton
+            button.text = k
+            if (k.length > 1) button.textSize = 13f
+            button.setOnClickListener { pressKey(k) }
+            // 行按居中对齐：GridLayout 默认按文字基线对齐，字号小一号的键会比同排的低一截
+            val params = android.widget.GridLayout.LayoutParams(
+                android.widget.GridLayout.spec(android.widget.GridLayout.UNDEFINED, android.widget.GridLayout.CENTER),
+                android.widget.GridLayout.spec(android.widget.GridLayout.UNDEFINED, 1f),
+            ).apply {
+                width = 0
+                height = ctx.dp(44)
+                setMargins(ctx.dp(3), ctx.dp(3), ctx.dp(3), ctx.dp(3))
+            }
+            keyboard.addView(button, params)
+        }
+    }
+
+    private fun pressKey(k: String) {
+        val text = query.text
+        when (k) {
+            "删除" -> if (text.isNotEmpty()) text.delete(text.length - 1, text.length)
+            "清空" -> {
+                text.clear()
+                reset()
+            }
+            "系统键盘" -> {
+                query.requestFocus()
+                (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(query, InputMethodManager.SHOW_FORCED)
+            }
+            "搜索" -> {
+                // 打的是首字母时，搜第一个联想出来的片名；但打的正好是某个片名（如「2012」），或联想还没跟上这段文字，就搜原文
+                val typed = text.toString().trim()
+                val exact = suggestPool().any { it.equals(typed, ignoreCase = true) }
+                val fresh = suggestedFor.trim() == typed && suggestions.isNotEmpty()
+                val target = if (typed.all { it.code < 128 } && fresh && !exact) suggestions.first() else typed
+                if (target.isNotEmpty()) {
+                    query.setText(target)
+                    search(target)
+                }
+            }
+            else -> text.append(k.lowercase())
+        }
+    }
+
+    private fun showKeyboard(show: Boolean) {
+        if (view == null || !requireContext().isTv()) return
+        if (!show) keepFocusInBox()
+        keyboard.visibility = if (show) View.VISIBLE else View.GONE
+    }
+
+    /** 键盘或联想要藏起来时，焦点在它们上面就先挪回搜索框（不然会落到左边的导航栏上）。 */
+    private fun keepFocusInBox() {
+        if (keyboard.hasFocus() || suggestBox.hasFocus()) {
+            quietFocus = true
+            query.requestFocus()
+            quietFocus = false
+        }
+    }
+
+    /** 焦点离开搜索框、联想和键盘这一片，键盘就收起。 */
+    private fun syncKeyboard() {
+        if (view == null || keyboard.visibility != View.VISIBLE) return
+        val inside = (query.parent as View).findFocus() != null || keyboard.findFocus() != null || suggestBox.findFocus() != null
+        if (!inside) keyboard.visibility = View.GONE
     }
 
     override fun onHiddenChanged(hidden: Boolean) {
@@ -186,6 +339,7 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         filterBox.visibility = View.GONE
         syncIdle()
         showHistory()
+        showSuggestions(emptyList())
         // The layout setting may have changed while the results were up; redraw from what is loaded first, in case
         // the refresh below cannot reach the network and returns nothing.
         if (hotSections.isNotEmpty()) renderHot(hotSections)
@@ -378,7 +532,10 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
 
     /** Fills the box and searches, for keywords that arrive from the phone. */
     fun runSearch(keyword: String) {
-        if (view == null) return
+        if (view == null) {
+            pendingSearch = keyword
+            return
+        }
         query.setText(keyword)
         search(keyword)
     }
@@ -455,6 +612,10 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
             .hideSoftInputFromWindow(query.windowToken, 0)
         Store.addHistory(keyword)
         historyBox.visibility = View.GONE
+        suggestJob?.cancel()
+        keepFocusInBox()
+        suggestBox.visibility = View.GONE
+        keyboard.visibility = View.GONE
 
         val sources = Store.sources()
         if (sources.isEmpty()) {
