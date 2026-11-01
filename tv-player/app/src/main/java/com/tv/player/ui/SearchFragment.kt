@@ -114,6 +114,9 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         adapter = VodGroupAdapter(onClick = { PlayActivity.startVod(requireContext(), it) })
         results.layoutManager = GridLayoutManager(requireContext(), requireContext().gridSpan())
         results.adapter = adapter
+        // 不要条目动画：结果按源陆续到达、每次都整体重排，动画期间遥控器移焦点会让 RecyclerView 的隐藏条目记录错乱，
+        // 下次布局崩在 ChildHelper.unhide（"view is not a child"，1.0.28 小米电视上返回输入页时出现，模拟器可复现）
+        results.itemAnimator = null
         // RecyclerView makes itself focusable in its constructor, over the layout's focusable="false". The empty
         // results list sits under the charts and would take the remote's focus (Right from the navigation, Up from
         // the first row) while showing nothing. Only the cards inside should ever be focused.

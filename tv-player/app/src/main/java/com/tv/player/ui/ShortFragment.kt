@@ -90,6 +90,8 @@ class ShortFragment : Fragment(R.layout.fragment_short) {
         val span = ctx.gridSpan()
         list.layoutManager = GridLayoutManager(ctx, span)
         list.adapter = adapter
+        // 不要条目动画：主题 / 搜索结果按源陆续到达并重排，和搜索页一样会让 RecyclerView 崩在 ChildHelper.unhide
+        list.itemAnimator = null
         list.isFocusable = false // RecyclerView overrides the layout's focusable="false"; only the cards take the focus
         if (ctx.isTv()) list.setPadding(ctx.dp(12), ctx.dp(16), ctx.dp(12), ctx.dp(16)) // room for the 1.1x focused card
         // The next page is asked for when the last two rows come into view, by touch or by the remote moving the focus.
