@@ -85,7 +85,8 @@ class PhoneServer(private val listener: Listener) {
         val action = path.removePrefix("/$token").trim('/')
         when {
             action == "remote" -> respond(out, 200, remotePage())
-            action == "log" -> respond(out, 200, logPage())
+            action == "log" -> respond(out, 200, logPage("崩溃日志", CrashLog.read()))
+            action == "playlog" -> respond(out, 200, logPage("播放日志", PlayLog.read()))
             // The remote page calls these in the background; the answer is a single line of text.
             action.startsWith("key/") -> respond(out, 200, esc(listener.onKey(action.removePrefix("key/"))))
             method == "GET" || action.isEmpty() -> respond(out, 200, form())
@@ -174,10 +175,10 @@ document.querySelectorAll('[data-k]').forEach(function (b) {
 </script>""",
     )
 
-    /** 电视上记下的崩溃日志，在手机上看和复制（地址里的查询参数已经去掉）。 */
-    private fun logPage() = page(
-        "崩溃日志",
-        "<pre style=\"white-space:pre-wrap;word-break:break-all;font-size:12px\">${esc(CrashLog.read().ifEmpty { "没有崩溃记录" })}</pre><p><a href=\"/$token/\">返回输入页</a></p>",
+    /** 电视上记下的崩溃日志、播放日志，在手机上看和复制（地址里的查询参数已经去掉）。 */
+    private fun logPage(title: String, text: String) = page(
+        title,
+        "<pre style=\"white-space:pre-wrap;word-break:break-all;font-size:12px\">${esc(text.ifEmpty { "没有记录" })}</pre><p><a href=\"/$token/\">返回输入页</a></p>",
     )
 
     private fun form() = page(
@@ -187,7 +188,8 @@ document.querySelectorAll('[data-k]').forEach(function (b) {
 <div class="card"><h2>添加点播源</h2><form method="post" action="vod"><input name="name" placeholder="名称（可不填）"><input name="api" placeholder="接口地址 http(s)://…/api.php/provide/vod"><button>检测并添加</button></form><small>添加前会真实搜索一次，通过才会加入。</small></div>
 <div class="card"><h2>添加直播源</h2><form method="post" action="live"><input name="name" placeholder="名称（可不填）"><input name="url" placeholder="直播列表地址（TXT 或 M3U）"><button>下载并添加</button></form></div>
 <div class="card"><h2>添加网络存储</h2><form method="post" action="storage"><select name="kind" style="width:100%;padding:12px;margin:5px 0;border-radius:10px;background:#0E1015;color:#E8EAF0;border:1px solid #363C50;font-size:16px"><option value="webdav">WebDAV（OpenList / Alist、群晖、威联通）</option><option value="smb">SMB（Windows 共享、NAS）</option></select><input name="address" placeholder="如 http://192.168.1.10:5244/dav 或 smb://192.168.1.10/movies"><input name="user" placeholder="用户名（没有就不填）"><input name="pass" type="password" placeholder="密码"><input name="name" placeholder="名称（可不填）"><button>连接并添加</button></form><small>密码只存在电视上，不会上传。</small></div>""" +
-            CrashLog.count().let { n -> if (n == 0) "" else "<div class=\"card\"><h2>崩溃日志</h2><p>电视上记录了 $n 次崩溃。</p><a href=\"log\">查看崩溃日志</a></div>" },
+            CrashLog.count().let { n -> if (n == 0) "" else "<div class=\"card\"><h2>崩溃日志</h2><p>电视上记录了 $n 次崩溃。</p><a href=\"log\">查看崩溃日志</a></div>" } +
+            (if (PlayLog.isEmpty()) "" else "<div class=\"card\"><h2>播放日志</h2><p>电视上播放时的卡顿记录和请求耗时。</p><a href=\"playlog\">查看播放日志</a></div>"),
     )
 }
 

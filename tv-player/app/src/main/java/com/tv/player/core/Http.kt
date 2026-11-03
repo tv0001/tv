@@ -2,7 +2,11 @@ package com.tv.player.core
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.ConnectionPool
+import okhttp3.Dispatcher
+import okhttp3.EventListener
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Request
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
@@ -12,14 +16,31 @@ object Http {
 
     class Resp(val status: Int, val text: String, val finalUrl: String, val error: String? = null)
 
+    /** 解析缓存 + IPv4 优先（见 CachingDns）；网络换了时由 App 清掉。 */
+    val dns = CachingDns()
+
+    /**
+     * 整个应用一个连接池：测速、解析时连上的服务器，播放时直接复用那条连接，不用再握手。
+     * - 只用 HTTP/1.1：HTTP/2 会把同一服务器的请求并到一条连接上，多连接预取（PrefetchScheduler、RangedDataSource）
+     *   就失效了；而且连接池按「地址 + 协议」配对，播放器和测速必须是同一套设置才复用得上。
+     * - 每个服务器同时最多 16 个请求（默认 5）：播放器的 OkHttp 数据源走异步请求，受这个限制，
+     *   播放 + 预取 + 分段读 + 下一集预加载加起来会超过 5 个，超出的要排队。
+     */
     val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .connectTimeout(8, TimeUnit.SECONDS)
             .readTimeout(10, TimeUnit.SECONDS)
             .followRedirects(true)
             .followSslRedirects(true)
+            .dns(dns)
+            .protocols(listOf(Protocol.HTTP_1_1))
+            .connectionPool(ConnectionPool(16, 5, TimeUnit.MINUTES))
+            .dispatcher(Dispatcher().apply { maxRequestsPerHost = 16 })
             .build()
     }
+
+    /** 播放器用的：和 [client] 共用连接池、DNS 和并发设置，另外挂上统计（见 PlayNetStats）。 */
+    fun playerClient(events: EventListener.Factory): OkHttpClient = client.newBuilder().eventListenerFactory(events).build()
 
     /** Result of reading (part of) a body without keeping it, for speed tests. */
     class Fetched(val status: Int, val bytes: Long, val total: Long, val ttfbMs: Long, val readMs: Long)

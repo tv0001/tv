@@ -1,9 +1,9 @@
 {
-  "versionCode": 30,
-  "versionName": "1.0.29",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.29.apk",
-  "sha256": "a227cac52610f5ff8290870bfe57d3534c95c1951eca6987b468193588ac49ca",
-  "size": 6453396,
-  "notes": "修复：电视上搜索结果陆续出来时用遥控器移动焦点，之后返回或滚动可能闪退。",
+  "versionCode": 31,
+  "versionName": "1.0.30",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.30.apk",
+  "sha256": "bd55a61ebdb68c06a9a7c5c8ec92cf19588d228b95a547a44a85803cff656b5a",
+  "size": 4552653,
+  "notes": "播放更顺：播放器和测速共用网络连接、域名解析缓存并优先 IPv4、不计费网络上持续缓冲、等当前这集缓冲够了再预加载下一集；新增播放日志（设置里查看卡顿记录）；安装包从 6.5MB 减到 4.6MB。",
   "force": false
 }

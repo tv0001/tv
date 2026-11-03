@@ -37,9 +37,14 @@ object CrashLog {
         val f = file ?: return
         val time = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
         val head = "$time · ${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE}) · ${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE} · ${thread.name}"
+        append(f, entry(head, error.stackTraceToString()), MAX_CHARS)
+    }
+
+    /** 追加一条到日志文件，超长时从最旧的整条丢起；先写临时文件再改名，写到一半被杀也不会弄坏旧记录。播放日志也用它。 */
+    fun append(f: File, entry: String, max: Int) {
         val old = if (f.exists()) f.readText() else ""
-        val tmp = File(f.parentFile, "crash.log.tmp")
-        tmp.writeText(trim(old + entry(head, error.stackTraceToString())))
+        val tmp = File(f.parentFile, f.name + ".tmp")
+        tmp.writeText(trim(old + entry, max))
         tmp.renameTo(f)
     }
 

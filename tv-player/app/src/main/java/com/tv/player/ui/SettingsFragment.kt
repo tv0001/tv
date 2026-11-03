@@ -19,6 +19,7 @@ import com.tv.player.BuildConfig
 import com.tv.player.core.AppUpdate
 import com.tv.player.core.Backup
 import com.tv.player.core.CrashLog
+import com.tv.player.core.PlayLog
 import com.tv.player.core.Library
 import com.tv.player.core.LibrarySync
 import com.tv.player.core.Quark
@@ -245,7 +246,8 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         }
         view.findViewById<View>(R.id.syncHost).setOnClickListener { hostSync() }
         view.findViewById<View>(R.id.syncJoin).setOnClickListener { joinSync() }
-        view.findViewById<View>(R.id.crashView).setOnClickListener { showCrashLog() }
+        view.findViewById<View>(R.id.crashView).setOnClickListener { showLog("崩溃日志", CrashLog::read, CrashLog::clear) }
+        view.findViewById<View>(R.id.playLogView).setOnClickListener { showLog("播放日志", PlayLog::read, PlayLog::clear) }
         syncCrash()
         view.findViewById<View>(R.id.exportBtn).setOnClickListener { exportLauncher.launch("tv-player-backup.json") }
         view.findViewById<View>(R.id.restoreBtn).setOnClickListener { restoreLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) }
@@ -361,12 +363,13 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         else "本机记录了 $count 次崩溃"
         status.visibility = if (count > 0) View.VISIBLE else View.GONE
         button.visibility = status.visibility
+        v.findViewById<View>(R.id.playLogView).visibility = if (PlayLog.isEmpty()) View.GONE else View.VISIBLE
     }
 
-    private fun showCrashLog() {
+    private fun showLog(title: String, read: () -> String, clear: () -> Unit) {
         val context = requireContext()
         val text = TextView(context).apply {
-            text = CrashLog.read().ifEmpty { "没有崩溃记录" }
+            text = read().ifEmpty { "没有记录" }
             textSize = 11f
             typeface = android.graphics.Typeface.MONOSPACE
             setTextIsSelectable(!context.isTv())
@@ -376,16 +379,16 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         // 电视上滚动区域要能拿到焦点，上下键才滚得动
         val scroll = android.widget.ScrollView(context).apply { isFocusable = true; addView(text) }
         val builder = MaterialAlertDialogBuilder(context)
-            .setTitle("崩溃日志")
+            .setTitle(title)
             .setView(scroll)
             .setNegativeButton("清空") { _, _ ->
-                CrashLog.clear()
+                clear()
                 syncCrash()
             }
             .setPositiveButton("关闭", null)
         if (!context.isTv()) builder.setNeutralButton("复制") { _, _ ->
             val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
-            clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("崩溃日志", CrashLog.read()))
+            clipboard?.setPrimaryClip(android.content.ClipData.newPlainText(title, read()))
         }
         RemoteControl.cover(builder.show())
     }

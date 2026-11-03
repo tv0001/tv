@@ -10,8 +10,8 @@ android {
         applicationId = 'com.tv.player'
         minSdk = 26
         targetSdk = 35
-        versionCode = (project.findProperty('appVersionCode') ?: '30').toString().toInteger()
-        versionName = (project.findProperty('appVersionName') ?: '1.0.29').toString()
+        versionCode = (project.findProperty('appVersionCode') ?: '31').toString().toInteger()
+        versionName = (project.findProperty('appVersionName') ?: '1.0.30').toString()
         // 唯一的原生库是 ffmpeg 音频解码：电视盒子和手机基本都是 ARM，只打这两种（少 3MB）。没有 ARM 转译的 x86 设备装不上
         ndk {
             abiFilters 'armeabi-v7a', 'arm64-v8a'
@@ -30,10 +30,19 @@ android {
         }
     }
 
+    // 界面只有中文：依赖库（material、appcompat 等）带的几十种语言的翻译不打进包里，其余语言的系统回退到默认（英文）
+    androidResources {
+        localeFilters += ['zh-rCN', 'zh-rHK', 'zh-rTW']
+    }
+
     // bouncycastle（smbj 用它算 NTLM）自带的后量子算法数据表和证书提示文字用不到，不打进包里
     packaging {
         resources {
             excludes += ['org/bouncycastle/pqc/**', 'org/bouncycastle/x509/*.properties']
+        }
+        // ffmpeg 原生库压缩后放进包里（默认是不压缩、直接从包里加载）：安装包小 1MB 多，代价是安装时系统要解压一份到存储里
+        jniLibs {
+            useLegacyPackaging = true
         }
     }
 
@@ -54,6 +63,8 @@ dependencies {
     implementation 'androidx.media3:media3-exoplayer:1.6.1'
     implementation 'androidx.media3:media3-exoplayer-hls:1.6.1'
     implementation 'androidx.media3:media3-ui:1.6.1'
+    // 播放器走 OkHttp：和测速、解析共用一个连接池（见 Http.playerClient）
+    implementation 'androidx.media3:media3-datasource-okhttp:1.6.1'
     // AC3 / EAC3 / DTS / TrueHD 等音轨的软解（设备没有对应硬解时才用）。Jellyfin 按 media3 版本编译的官方 ffmpeg 扩展；
     // 它的 pom 写着依赖 media3 1.7.1，会把播放器整体顶上去，所以不要传递依赖，解码器基础库按本项目的版本单独引入
     implementation('org.jellyfin.media3:media3-ffmpeg-decoder:1.6.1+2') { transitive = false }

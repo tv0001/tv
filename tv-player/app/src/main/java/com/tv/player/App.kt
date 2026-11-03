@@ -6,6 +6,8 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import com.tv.player.core.CrashLog
+import com.tv.player.core.Http
+import com.tv.player.core.PlayLog
 import com.tv.player.core.Library
 import com.tv.player.core.Store
 import com.tv.player.ui.CastSession
@@ -15,6 +17,17 @@ class App : Application() {
     override fun onCreate() {
         super.onCreate()
         CrashLog.install(this) // 最先装上：后面初始化时崩了也要记下来
+        PlayLog.install(this)
+        // 换了网络（换 Wi-Fi、断线重连）：旧网络查到的域名地址不一定还能用，池里旧网络上的空闲连接也别再拿来用
+        // （请求发出去才发现连接已死，要等满读超时）
+        runCatching {
+            getSystemService(android.net.ConnectivityManager::class.java)?.registerDefaultNetworkCallback(object : android.net.ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: android.net.Network) {
+                    Http.dns.clear()
+                    Http.client.connectionPool.evictAll()
+                }
+            })
+        }
         Store.init(this)
         Library.init(this)
         Episodes.schedule(this)

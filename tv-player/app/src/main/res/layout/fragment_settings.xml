@@ -912,6 +912,15 @@
                     android:layout_marginTop="8dp"
                     android:text="查看崩溃日志" />
 
+                <!-- 播放日志（PlayLog）：卡顿和每次播放的请求耗时，有记录才显示 -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/playLogView"
+                    style="@style/Widget.TvPlayer.TonalButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="查看播放日志（卡顿记录）" />
+
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

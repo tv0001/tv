@@ -73,7 +73,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.cache.CacheDataSource
-import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
@@ -117,6 +117,8 @@ import com.tv.player.core.FrameRateMatch
 import com.tv.player.core.PrefetchPolicy
 import com.tv.player.core.PrefetchScheduler
 import com.tv.player.core.PlayCache
+import com.tv.player.core.PlayLog
+import com.tv.player.core.PlayNetStats
 import com.tv.player.core.SeekRamp
 import com.tv.player.core.StallPolicy
 import com.tv.player.core.Store
@@ -152,6 +154,7 @@ import kotlin.math.roundToInt
 class PlayActivity : BaseActivity() {
     companion object {
         private const val STALL_MS = 20_000L
+        private const val MAX_BUFFER_MS = 50_000
         private const val SAVE_MS = 10_000L
         private const val MAX_SKIP = 300
         private const val NEXT_CARD_MS = 10_000L // 离一集结束还有这么久时提示下一集
@@ -163,6 +166,8 @@ class PlayActivity : BaseActivity() {
         private const val RESCUE_MS = 4_000L
         private const val PRELOAD_AFTER_MS = 2_500L // how long an episode plays before its neighbours are loaded ahead
         private const val PRELOAD_MS = 5_000L // how much of the next episode is loaded ahead
+        private const val PRELOAD_MIN_BUFFER_MS = 20_000L // 当前这集至少缓冲这么多，才预加载后面几集
+        private const val PRELOAD_RETRY_MS = 2_000L
         private const val BACKGROUND_PROBE_MS = 10_000L
         private const val QUICK_MS = 6 * 3600_000L
         private const val MAX_SHOWS = 200 // programmes listed for replay
@@ -296,6 +301,16 @@ class PlayActivity : BaseActivity() {
     // Stalls in this viewing: the more there were, the longer playback gathers buffer before resuming (see StallPolicy).
     private val stallPolicy = StallPolicy()
 
+    // 播放日志（PlayLog）：播放器请求的耗时，卡顿开始的时刻和当时的情况，这次打开以来的播放时长、卡顿和换线次数
+    private val netStats = PlayNetStats()
+    private var stallAt = 0L
+    private var stallNote: String? = null
+    private var stallTotalMs = 0L
+    private var stallCount = 0
+    private var failOvers = 0
+    private var playingSince = 0L
+    private var playedMs = 0L
+
     // Fetching ahead / reading in pieces (on demand only). prefetchRoot is the address of what the player has now: only
     // that is fetched ahead for, not an episode loaded ahead of it.
     private val fallbackLatch = FallbackLatch()
@@ -322,7 +337,19 @@ class PlayActivity : BaseActivity() {
     private val retired = ArrayList<MediaItem>() // taken by the player: let go of them once it has moved on
     private var playingPreload: MediaItem? = null
     private var preloadJob: Job? = null
-    private val preloadNext = Runnable { preloadNextEpisode() }
+    // 当前这集缓冲够了才去预加载后面几集：慢线路上刚起播就预加载，会和正在放的这集抢带宽（播放日志里看到过
+    // 起播 2.5 s 后开始预加载、紧接着就卡）。不够就过一会儿再看；卡过之后再次就绪时会重新排上。
+    // 「够了」：缓冲到 20 s，或缓冲到了片尾，或播放器自己停止下载了（缓冲已满：码率很高的片子先碰到字节上限，
+    // 可能永远缓冲不到 20 s）。
+    private val preloadNext = object : Runnable {
+        override fun run() {
+            val p = player ?: return
+            val toEnd = p.duration != C.TIME_UNSET && p.bufferedPosition >= p.duration - 1_000
+            val full = p.playbackState == Player.STATE_READY && !p.isLoading
+            if (p.totalBufferedDuration >= PRELOAD_MIN_BUFFER_MS || toEnd || full) preloadNextEpisode()
+            else handler.postDelayed(this, PRELOAD_RETRY_MS)
+        }
+    }
     private var sleepAtMs = 0L // SystemClock.elapsedRealtime() deadline; 0 = off
     private var sleepAfterEp = false
     private var sleepChoice = 0
@@ -423,19 +450,21 @@ class PlayActivity : BaseActivity() {
             items = vodItemsFromJson(intent.getStringExtra("items") ?: "[]")
         }
 
-        val httpFactory = DefaultHttpDataSource.Factory()
+        // 走 OkHttp：和测速、解析共用连接池（测速时连上的服务器直接复用连接）、解析缓存和 IPv4 优先，
+        // 超时（建连 8 s、读 10 s）和跨协议跳转都按 Http.client 的设置。
+        val httpFactory = OkHttpDataSource.Factory(Http.playerClient(netStats))
             // As a default property (not setUserAgent, which is applied last and would replace a per-request one).
             .setDefaultRequestProperties(mapOf("User-Agent" to Http.UA))
-            .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(8_000)
-            .setReadTimeoutMs(10_000)
         // One retry instead of the default three, so a dead line hands over to the next one quickly.
         val failFast = object : DefaultLoadErrorHandlingPolicy() {
             override fun getMinimumLoadableRetryCount(dataType: Int) = 1
         }
         // Start after 1 s of video instead of the default 2.5 s; the rest keeps buffering while it plays.
+        // 不计费的网络上一直缓冲到 50 s（下限 = 上限）：不再缓满就停、掉到 15 s 才接着下，连接不会闲着被服务器断开，
+        // 线路忽快忽慢时余量也多。计费网络（手机流量）还是 15 s 才接着下，中途退出少浪费流量。
+        val metered = (getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).isActiveNetworkMetered
         val loadControl = StallAwareLoadControl(
-            DefaultLoadControl.Builder().setBufferDurationsMs(15_000, 50_000, 1_000, 2_000).build(),
+            DefaultLoadControl.Builder().setBufferDurationsMs(if (metered) 15_000 else MAX_BUFFER_MS, MAX_BUFFER_MS, 1_000, 2_000).build(),
             stallPolicy,
         )
         // Drive addresses (web login) need the session cookies on every request to the drive's hosts.
@@ -981,9 +1010,11 @@ class PlayActivity : BaseActivity() {
                 stallPolicy.onStall()
                 stalledThisEpisode = true
                 Log.d("TVP", "stall ${stallPolicy.stalls}: ${stallPolicy.resumeMs()} ms are buffered before playing on")
+                noteStall()
             }
             when (state) {
                 Player.STATE_READY -> {
+                    endStall("缓过来了")
                     if (!started) Log.d("TVP", "ready on ${current?.label}")
                     // A few seconds into the episode, once it plays steadily, the next one is loaded ahead.
                     if (!isLive && !replayMode) {
@@ -1044,6 +1075,12 @@ class PlayActivity : BaseActivity() {
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
+            val now = SystemClock.elapsedRealtime()
+            if (isPlaying) playingSince = now
+            else if (playingSince > 0) {
+                playedMs += now - playingSince
+                playingSince = 0
+            }
             updateKeepScreen()
             updatePlayPause()
             // Paused on TV: keep the bar up so the picture is not left frozen with nothing on screen.
@@ -1136,6 +1173,46 @@ class PlayActivity : BaseActivity() {
         attempt()
     }
 
+    /** 什么在放：片名、第几集、哪条线路、画质和码率。 */
+    private fun logWhat(): String {
+        val ep = if (isLive) "" else " 第${curEp + 1}集"
+        val format = player?.videoFormat
+        val rate = format?.bitrate?.takeIf { it > 0 }?.let { String.format(Locale.US, " %.1fMbps", it / 1e6) }.orEmpty()
+        val size = format?.takeIf { it.height > 0 }?.let { " ${it.width}x${it.height}" }.orEmpty()
+        return "$title$ep · ${current?.label ?: "?"} ·$size$rate".trimEnd(' ', '·')
+    }
+
+    private fun prefetchState() = if (prefetch != null && prefetchOn()) "开" else "关"
+
+    /** 播放中途开始缓冲：记下当时的情况，缓过来（或换线、退出）时连同等了多久一起写进播放日志。 */
+    private fun noteStall() {
+        stallAt = SystemClock.elapsedRealtime()
+        stallCount++
+        stallNote = "${logWhat()}\n本次第 $stallCount 次卡顿 · 多连接预取${prefetchState()} · 恢复前要缓冲 ${stallPolicy.resumeMs() / 1000.0}s\n卡之前最近的请求：\n${netStats.recentText()}"
+    }
+
+    private fun endStall(how: String) {
+        val note = stallNote ?: return
+        val waited = SystemClock.elapsedRealtime() - stallAt
+        stallTotalMs += waited
+        stallNote = null
+        PlayLog.add("卡顿 ${PlayNetStats.ms(waited)}，$how", note)
+    }
+
+    /** 离开播放页：这次播了多久、卡了几次、请求耗时汇总。没发出请求（打开就退出）不记。 */
+    private fun logSummary() {
+        if (netStats.requests == 0) return
+        if (playingSince > 0) playedMs += SystemClock.elapsedRealtime() - playingSince
+        playingSince = 0
+        val minutes = String.format(Locale.US, "%.1f", playedMs / 60_000.0)
+        val metered = (getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).isActiveNetworkMetered
+        PlayLog.add(
+            "播放小结",
+            "${logWhat()}\n播放 $minutes 分钟 · 卡顿 $stallCount 次共 ${PlayNetStats.ms(stallTotalMs)} · 换线 $failOvers 次 · " +
+                "${if (metered) "计费网络" else "不计费网络"} · 多连接预取${prefetchState()}\n${netStats.summary()}",
+        )
+    }
+
     /**
      * A single failure can be reported twice (the stall timer, then the player's own timeout error). While the next
      * line is already being picked, the second report must be ignored: restarting would drop the line just picked.
@@ -1154,11 +1231,13 @@ class PlayActivity : BaseActivity() {
         }
         // Dropped mid-playback: carry on from here on the next line instead of starting over.
         if (!isLive && started) pendingStart = player?.currentPosition ?: pendingStart
+        failOvers++
         attempt()
     }
 
     /** Picks the next untried line/source and starts it. */
     private fun attempt() {
+        endStall("没缓过来，换了线路或重新开始")
         playJob?.cancel()
         // The episode that is starting needs the bandwidth more than the ones after it: what is still being resolved is
         // dropped. What the manager has loaded is kept (an invalidate here would empty the very source about to be played).
@@ -2914,6 +2993,8 @@ class PlayActivity : BaseActivity() {
     }
 
     override fun onDestroy() {
+        endStall("退出时还在缓冲")
+        logSummary()
         abandonPull()
         stopKeepAlive()
         playJob?.cancel()
