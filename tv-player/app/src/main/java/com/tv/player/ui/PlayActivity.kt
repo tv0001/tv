@@ -40,6 +40,7 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.view.VelocityTracker
 import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -55,6 +56,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.animation.doOnCancel
 import androidx.core.animation.doOnEnd
 import androidx.core.view.ViewCompat
+import androidx.core.view.doOnLayout
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
@@ -75,9 +77,12 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.datasource.ResolvingDataSource
+import androidx.media3.exoplayer.DecoderCounters
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.SeekParameters
+import androidx.media3.exoplayer.analytics.AnalyticsListener
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.preload.DefaultPreloadManager
 import androidx.media3.exoplayer.source.preload.PreloadException
@@ -154,6 +159,12 @@ import kotlin.math.roundToInt
 class PlayActivity : BaseActivity() {
     companion object {
         private const val STALL_MS = 20_000L
+        private const val TALL_BOX = 0.5f // 竖屏视频的小窗最高占页面的这么多
+        private const val FLICK_DP = 1000 // 每秒这么多 dp 以上算「甩」
+        private const val NEXT_CARD_MAX_MS = 6_000L // 下一集的卡片最多盖这么久
+        private const val RETRY_DELAY_MS = 2_000L
+        private const val RETRY_WINDOW_MS = 60_000L // 原线路重试过后这么久之内又出错，就换线
+        private const val DROP_LOG_MS = 60_000L // 掉帧最多这么久记一条
         private const val MAX_BUFFER_MS = 50_000
         private const val SAVE_MS = 10_000L
         private const val MAX_SKIP = 300
@@ -311,6 +322,18 @@ class PlayActivity : BaseActivity() {
     private var playingSince = 0L
     private var playedMs = 0L
 
+    // 画面这一侧：解码器、掉帧（分得清是网络卡还是解码卡），去广告剔掉的分片，原线路重试
+    private var videoDecoder = ""
+    private var audioDecoder = ""
+    private var droppedFrames = 0L
+    private var renderedFrames = 0L
+    private var dropLoggedAt = 0L
+    private var droppedSinceLog = 0
+    private val adCleaned = HashMap<String, Int>() // 播放列表地址 -> 剔除的分片数（重新加载同一份不重复算）
+    private var adRule = ""
+    private var retries = 0
+    private var retriedAt = 0L
+
     // Fetching ahead / reading in pieces (on demand only). prefetchRoot is the address of what the player has now: only
     // that is fetched ahead for, not an episode loaded ahead of it.
     private val fallbackLatch = FallbackLatch()
@@ -413,8 +436,8 @@ class PlayActivity : BaseActivity() {
     private val phoneStack get() = !isTv && !(isTablet() && resources.configuration.screenWidthDp >= 720)
 
     /**
-     * Phones, tall pictures (short dramas): the picture fills the whole screen, like a vertical video in Bilibili. A pull
-     * down on the small picture gets there, a pull up (or back) leaves. [portraitVideo] says the playing picture is tall.
+     * 手机上的竖屏视频（短剧）：画面铺满整个屏幕，和 B 站的竖屏视频一样。往下拖小窗下面那一栏进入，右下角的箭头
+     * （或返回键）退出。[portraitVideo] 表示正在放的画面是竖的。
      */
     private var portraitFull = false
     /** From the controller's own visibility callback: isControllerFullyVisible keeps saying true once the controller has timed out. */
@@ -469,9 +492,17 @@ class PlayActivity : BaseActivity() {
         )
         // Drive addresses (web login) need the session cookies on every request to the drive's hosts.
         // 网络存储：SMB 文件走自己的数据源，WebDAV 文件的请求带上账号
-        val network = ResolvingDataSource.Factory(SmbAwareDataSource.Factory(DefaultDataSource.Factory(this, httpFactory))) { spec ->
+        val resolving = ResolvingDataSource.Factory(SmbAwareDataSource.Factory(DefaultDataSource.Factory(this, httpFactory))) { spec ->
             val extra = spec.uri.host?.let(QuarkWeb::headersFor) ?: NetStore.headersFor(spec.uri.toString())
             if (extra == null) spec else spec.withRequestHeaders(spec.httpRequestHeaders + extra)
+        }
+        // 点播 m3u8 按订阅规则去广告（见 AdFilter）：放在最底层，缓存、预取、预加载拿到的都是清理后的列表
+        val network = AdFilterDataSource.Factory(resolving, Store::adRules) { url, r ->
+            Log.d("TVP", "ad filter (${r.rule}): ${r.removed} segments removed")
+            handler.post {
+                adCleaned[url] = r.removed
+                adRule = r.rule
+            }
         }
         // On-demand video is cached on disk as it plays (and as the next episode is loaded ahead); live is not, and neither
         // are a drive's files: their addresses expire and need the login.
@@ -545,6 +576,12 @@ class PlayActivity : BaseActivity() {
             )
             .also {
                 it.addListener(listener)
+                it.addAnalyticsListener(analytics)
+                // 隧道播放（电视上、设置里开了才用）：设备或音轨不支持时播放器自己退回普通方式
+                tunnelRequested = isTv && Store.tunneling()
+                if (tunnelRequested) (it.trackSelector as? DefaultTrackSelector)?.let { ts ->
+                    ts.setParameters(ts.buildUponParameters().setTunnelingEnabled(true))
+                }
                 it.playWhenReady = true
                 it.setPlaybackSpeed(if (isLive) 1f else Store.playSpeed())
                 it.setSeekParameters(SeekParameters.CLOSEST_SYNC) // swipe and arrow seeks land on the nearest keyframe: much quicker
@@ -634,6 +671,7 @@ class PlayActivity : BaseActivity() {
         findViewById<View?>(R.id.back)?.setOnClickListener { onBackPressedDispatcher.onBackPressed() }
         // The tall full screen's own buttons: that layer is part of this layout and fades in as the picture grows.
         findViewById<View?>(R.id.vBack)?.setOnClickListener { onBackPressedDispatcher.onBackPressed() }
+        findViewById<View?>(R.id.vExit)?.setOnClickListener { setPortraitFull(false) }
         findViewById<View?>(R.id.vSettings)?.setOnClickListener { showPlaySettings() }
         findViewById<View?>(R.id.vCast)?.setOnClickListener { showCast() }
         findViewById<View?>(R.id.vEpisodes)?.setOnClickListener { showEpisodes() }
@@ -696,9 +734,16 @@ class PlayActivity : BaseActivity() {
             ViewCompat.requestApplyInsets(layer)
         }
         // A layout that was rebuilt while the tall full screen is on (turned back from sideways) goes straight to it.
+        findViewById<CollapsingContent?>(R.id.content)?.let {
+            it.onPreScroll = ::collapseBy
+            it.onPullStart = ::sheetPullStart
+            it.onPull = ::sheetPull
+            it.onPullEnd = ::sheetPullEnd
+        }
         if (vfullShown) applyPortraitFull(animate = false) else {
             updateOverlayTitle()
             syncPullArrow()
+            applyPlayerBox()
         }
         setupGestures()
         applySubtitleStyle()
@@ -737,91 +782,121 @@ class PlayActivity : BaseActivity() {
         }
     }
 
-    // ---- pulling the small picture down into the full screen (follows the finger, like Bilibili) -------------------------
+    // ---- 往下拖小窗下面那一栏，进竖屏全屏（跟手，和 B 站一样） ---------------------------------------------------------
 
-    /** How the picture has to be scaled and moved to become the full-screen picture, and how far a finger must go for that. */
+    /** 小窗里的画面要放大、移动多少才和全屏的画面一样；[range]：下面那一栏从现在的位置拖到屏幕底要走多远。 */
     private class Pull(val scale: Float, val dy: Float, val range: Float)
+
+    /** 拖动中的样子：画面相对小窗的缩放和位移，页面其余部分还剩多少（1 原样，0 全屏）。 */
+    private class Pose(val scale: Float, val ty: Float, val page: Float)
 
     private var pull: Pull? = null
     private var pullT = 0f
+    private var pose = Pose(1f, 0f, 1f)
     private var pullAnimator: ValueAnimator? = null
+    private var sheetPulled = 0f // 这一栏已经被拖下去多少像素
 
-    /** Takes hold of the small picture for a pull; false when it cannot be worked out (then the drag is a volume swipe). */
+    /** 接管小窗准备拖进全屏；算不出来（还没有画面尺寸、还没排版）时返回 false。 */
     private fun beginPull(): Boolean {
-        if (pull != null) return false // the last one is still settling
+        if (pull != null) return false // 上一次还在收尾
         val root = findViewById<ConstraintLayout?>(R.id.root) ?: return false
+        val content = findViewById<View?>(R.id.content) ?: return false
         val size = player?.videoSize ?: return false
         if (size.width <= 0 || size.height <= 0 || playerView.height <= 0 || root.height <= 0) return false
         val aspect = size.width * size.pixelWidthHeightRatio / size.height
-        val boxH = playerView.height.toFloat()
-        val shownH = minOf(boxH, playerView.width / aspect) // the picture as it is now: fitted into its 16:9 box
-        val fullW = minOf(root.width.toFloat(), root.height * aspect) // and as it will be: fitted into the whole screen
+        val shownH = minOf(playerView.height.toFloat(), root.width / aspect) // 现在的画面：放进小窗
+        val fullW = minOf(root.width.toFloat(), root.height * aspect) // 全屏时的画面：放进整个屏幕
         val scale = (fullW / aspect) / shownH
-        val dy = root.height / 2f - (playerView.top + boxH / 2f)
-        pull = Pull(scale, dy, root.height * 0.3f)
+        val dy = root.height / 2f - (playerView.top + playerView.height / 2f)
+        pull = Pull(scale, dy, (root.height - content.top).toFloat().coerceAtLeast(dp(120).toFloat()))
         pullT = 0f
+        sheetPulled = 0f
         playerView.hideController()
-        playerView.translationZ = dp(8).toFloat() // above the lists, which are drawn after it
+        playerView.translationZ = dp(8).toFloat() // 盖在后画的列表上面
         root.setBackgroundColor(Color.BLACK)
         return true
     }
 
+    private fun setPose(p: Pose) {
+        pose = p
+        playerView.scaleX = p.scale
+        playerView.scaleY = p.scale
+        playerView.translationY = p.ty
+        findViewById<View?>(R.id.topbar)?.alpha = p.page
+        // 下面那一栏跟着手指往下走（画面在它上面放大）
+        findViewById<View?>(R.id.content)?.translationY = (1f - p.page) * (pull?.range ?: 0f)
+    }
+
+    /** 拖进全屏的进度 [t]：0 是小窗，1 看起来就是全屏。 */
     private fun setPull(t: Float) {
         val g = pull ?: return
         pullT = t
-        val s = 1f + (g.scale - 1f) * t
-        playerView.scaleX = s
-        playerView.scaleY = s
-        playerView.translationY = g.dy * t
-        findViewById<View?>(R.id.topbar)?.alpha = 1f - t
-        findViewById<View?>(R.id.content)?.alpha = 1f - t
-        findViewById<View?>(R.id.pullArrow)?.apply {
-            translationY = t * dp(56)
-            alpha = 0.85f * (1f - t)
-        }
+        setPose(Pose(1f + (g.scale - 1f) * t, g.dy * t, 1f - t))
     }
 
-    /** Letting go: past a third of the way it goes on to the full screen, short of that it springs back. */
-    private fun endPull(up: Boolean) {
-        if (pull == null) return
-        val commit = up && pullT >= 0.3f
-        val from = pullT
-        val to = if (commit) 1f else 0f
+    /** 这一栏能不能往下拖：竖屏视频的小窗，列表在顶上，没有别的拖动在进行。 */
+    private fun sheetPullStart(): Boolean {
+        if (!phoneStack || landscape || vfullShown || pull != null || feed != null || !portraitVideo || !canPortraitFull) return false
+        return findViewById<View?>(R.id.episodes)?.canScrollVertically(-1) != true
+    }
+
+    /** 这一栏被往下拖了 [dy] 像素（往回拖是负数）：小窗没撑到最高就先撑高，撑满了再拖着这一栏进全屏。 */
+    private fun sheetPull(dy: Float) {
+        var rest = dy
+        if (pull == null) {
+            val list = findViewById<View?>(R.id.episodes)
+            if (rest > 0 && boxCollapse > 0f && list != null) {
+                rest += collapseBy(-rest.roundToInt(), list) // 用掉的是负数
+                if (rest <= 0f) return
+            }
+            if (rest <= 0f || !beginPull()) return
+        }
+        val g = pull ?: return
+        sheetPulled = (sheetPulled + rest).coerceIn(0f, g.range)
+        setPull(sheetPulled / g.range)
+    }
+
+    private fun sheetPullEnd(up: Boolean, velocityY: Float) = endPull(up, velocityY)
+
+    /** 松手：拖过三成，或者往下一甩，就进全屏；不够就弹回。 */
+    private fun endPull(up: Boolean, velocityY: Float = 0f) {
+        val g = pull ?: return
+        val flick = velocityY > dp(FLICK_DP) && pullT > 0.05f
+        val commit = up && (pullT >= 0.3f || flick)
+        val from = pose
+        val to = if (commit) Pose(g.scale, g.dy, 0f) else Pose(1f, 0f, 1f)
         pullAnimator?.cancel()
         var cancelled = false
-        pullAnimator = ValueAnimator.ofFloat(from, to).apply {
-            duration = 160L + (180 * abs(to - from)).toLong()
+        pullAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 200L + (160 * abs(to.page - from.page)).toLong()
             interpolator = DecelerateInterpolator()
-            addUpdateListener { setPull(it.animatedValue as Float) }
+            addUpdateListener {
+                val f = it.animatedValue as Float
+                setPose(Pose(from.scale + (to.scale - from.scale) * f, from.ty + (to.ty - from.ty) * f, from.page + (to.page - from.page) * f))
+            }
             doOnCancel { cancelled = true }
             doOnEnd { if (!cancelled) finishPull(commit) }
             start()
         }
     }
 
-    /** The page is being rebuilt or left in the middle of a pull: nothing is finished on the old views, the pull just ends. */
+    /** 拖到一半页面要重建或离开：旧的视图上什么都不收尾，拖动直接作废。 */
     private fun abandonPull() {
         pullAnimator?.removeAllListeners()
         pullAnimator?.cancel()
         pullAnimator = null
         pull = null
+        pose = Pose(1f, 0f, 1f)
+        abandonFeed()
     }
 
-    /** The pull is over: the picture is back at rest, and if it was taken all the way the page really is the full screen. */
-    private fun finishPull(commit: Boolean) {
-        playerView.scaleX = 1f
-        playerView.scaleY = 1f
-        playerView.translationY = 0f
+    /** 拖动结束：画面回到原位；如果结果是全屏，页面真的换成全屏布局。 */
+    private fun finishPull(full: Boolean) {
+        setPose(Pose(1f, 0f, 1f))
         playerView.translationZ = 0f
-        findViewById<View?>(R.id.topbar)?.alpha = 1f
-        findViewById<View?>(R.id.content)?.alpha = 1f
-        findViewById<View?>(R.id.pullArrow)?.apply {
-            translationY = 0f
-            alpha = 0.85f
-        }
         pull = null
         pullAnimator = null
-        if (commit && portraitVideo && canPortraitFull) {
+        if (full && portraitVideo && canPortraitFull) {
             portraitFull = true
             applyPortraitFull(animate = false)
             applySystemBars()
@@ -830,14 +905,190 @@ class PlayActivity : BaseActivity() {
                 animate().alpha(1f).setDuration(180).start()
             }
             playerView.showController()
-            val episodes = details[curSrc]?.lines?.getOrNull(curLine)?.episodes?.size ?: 0
-            if (episodes > 1 && Store.swipeTips() < 3) {
-                Store.bumpSwipeTips()
-                flashHud("上滑下一集，下滑上一集", 2_500)
-            }
+            showFullTip()
         } else {
             findViewById<ConstraintLayout?>(R.id.root)?.setBackgroundColor(getColor(R.color.bg))
+            applyPlayerBox()
         }
+    }
+
+    /** 头几次进竖屏全屏（不止一集时）：告诉怎么切集。 */
+    private fun showFullTip() {
+        val episodes = details[curSrc]?.lines?.getOrNull(curLine)?.episodes?.size ?: 0
+        if (Store.swipeTips() >= 3 || episodes <= 1) return
+        Store.bumpSwipeTips()
+        flashHud("上滑下一集，下滑上一集", 2_500)
+    }
+
+    // ---- 竖屏全屏里上下滑切集（整页跟手，和抖音一样） ------------------------------------------------------------------
+
+    /** 进行中的一次滑动：[dir] 1 往上滑去下一集、-1 往下滑去上一集；[range] 一整页多高；[exists] 那一集有没有。 */
+    private class Feed(val dir: Int, val range: Float, val exists: Boolean)
+
+    private var feed: Feed? = null
+    private val velocity = VelocityTracker.obtain()
+    private var feedOffset = 0f
+    private var feedAnimator: ValueAnimator? = null
+    private var tunnelRequested = false // 建播放器时有没有要求隧道播放（设置之后再改不影响这个播放器）
+
+    /**
+     * 竖屏全屏里中间上滑（下一集）或下滑（上一集）：这一集的画面跟着手指走，那一集的卡片（海报 + 集名）从下面（上面）
+     * 跟进来。那一集的真画面要等切过去才有：同时开两个播放器太费解码器和流量，所以先用卡片顶着，第一帧出来再淡出。
+     */
+    private fun beginFeed(dir: Int): Boolean {
+        if (feed != null || pull != null) return false
+        val root = findViewById<View?>(R.id.root) ?: return false
+        val card = findViewById<View?>(R.id.vNext) ?: return false
+        if (root.height <= 0) return false
+        val next = if (isLive || replayMode) null else details[curSrc]?.lines?.getOrNull(curLine)?.episodes?.getOrNull(curEp + dir)
+        handler.removeCallbacks(hideNextCard)
+        card.animate().cancel()
+        if (next != null) {
+            findViewById<TextView?>(R.id.vNextName)?.text = next.name
+            findViewById<View?>(R.id.vNextSpin)?.visibility = View.INVISIBLE
+            findViewById<ImageView?>(R.id.vNextPoster)?.let { img ->
+                if (img.tag == null) {
+                    img.tag = true
+                    img.load(details[curSrc]?.pic?.ifEmpty { null } ?: pic.ifEmpty { null })
+                    if (Build.VERSION.SDK_INT >= 31) img.setRenderEffect(RenderEffect.createBlurEffect(40f, 40f, Shader.TileMode.CLAMP))
+                }
+            }
+            card.alpha = 1f
+            card.translationZ = dp(10).toFloat()
+            card.visibility = View.VISIBLE
+        } else card.visibility = View.GONE
+        feed = Feed(dir, root.height.toFloat(), next != null)
+        playerView.hideController()
+        setFeedOffset(0f)
+        return true
+    }
+
+    /** 手指往上走了 [up] 像素（往下是负数）。那个方向没有集了，页面只动一点点，像被拉住一样。 */
+    private fun feedDrag(up: Float) {
+        val f = feed ?: return
+        val d = up * f.dir
+        setFeedOffset(if (f.exists) d.coerceIn(0f, f.range) else (d / 3f).coerceIn(0f, f.range / 5f))
+    }
+
+    private fun setFeedOffset(d: Float) {
+        val f = feed ?: return
+        feedOffset = d
+        playerView.translationY = -d * f.dir
+        findViewById<View?>(R.id.vOverlay)?.translationY = -d * f.dir
+        if (f.exists) findViewById<View?>(R.id.vNext)?.translationY = (f.range - d) * f.dir
+    }
+
+    /** 松手：滑过五分之一屏，或者往那个方向一甩，就切过去；不够就弹回。 */
+    private fun endFeed(up: Boolean, velocityY: Float) {
+        val f = feed ?: return
+        val flick = -velocityY * f.dir > dp(FLICK_DP) && feedOffset > dp(16)
+        val commit = up && f.exists && (feedOffset > f.range * 0.2f || flick)
+        Log.d("TVP", "feed swipe: ${feedOffset.roundToInt()}px, ${velocityY.roundToInt()}px/s -> ${if (!commit) "back" else if (f.dir > 0) "next" else "previous"}")
+        if (up && !f.exists && feedOffset > dp(16)) {
+            val count = details[curSrc]?.lines?.getOrNull(curLine)?.episodes?.size ?: 0
+            flashHud(if (count <= 1) "这部只有一集" else if (f.dir > 0) "已经是最后一集" else "已经是第一集", 1_200)
+        }
+        val to = if (commit) f.range else 0f
+        feedAnimator?.cancel()
+        var cancelled = false
+        feedAnimator = ValueAnimator.ofFloat(feedOffset, to).apply {
+            duration = 160L + (160 * abs(to - feedOffset) / f.range).toLong()
+            interpolator = DecelerateInterpolator()
+            addUpdateListener { setFeedOffset(it.animatedValue as Float) }
+            doOnCancel { cancelled = true }
+            doOnEnd { if (!cancelled) finishFeed(if (commit) f.dir else 0) }
+            start()
+        }
+    }
+
+    /** 滑动结束。切到那一集（[step] 1 或 -1，0 不切）：卡片一直盖着，等它第一帧画面出来。 */
+    private fun finishFeed(step: Int) {
+        feed = null
+        feedAnimator = null
+        playerView.translationY = 0f
+        findViewById<View?>(R.id.vOverlay)?.translationY = 0f
+        val card = findViewById<View?>(R.id.vNext) ?: return
+        val count = details[curSrc]?.lines?.getOrNull(curLine)?.episodes?.size ?: 0
+        if (step == 0 || curEp + step !in 0 until count) {
+            card.visibility = View.GONE
+            return
+        }
+        card.translationY = 0f
+        findViewById<View?>(R.id.vNextSpin)?.visibility = View.VISIBLE
+        selectEpisode(curEp + step)
+        handler.removeCallbacks(hideNextCard)
+        handler.postDelayed(hideNextCard, NEXT_CARD_MAX_MS) // 到时候还没起播，就让播放器自己的转圈接手
+    }
+
+    /** 切过去的那一集的卡片淡出（第一帧出来了，或者等太久了）。 */
+    private val hideNextCard = Runnable {
+        if (feed != null) return@Runnable
+        findViewById<View?>(R.id.vNext)?.takeIf { it.visibility == View.VISIBLE }?.animate()?.alpha(0f)?.setDuration(160)
+            ?.withEndAction { findViewById<View?>(R.id.vNext)?.visibility = View.GONE }?.start()
+    }
+
+    private fun abandonFeed() {
+        feedAnimator?.removeAllListeners()
+        feedAnimator?.cancel()
+        feedAnimator = null
+        feed = null
+        handler.removeCallbacks(hideNextCard)
+    }
+
+    // ---- 竖屏视频的小窗：比 16:9 高，列表往上滚时收矮（和 B 站一样） ---------------------------------------------------
+
+    /** 0：竖屏视频的小窗撑到最高；1：收到 16:9。 */
+    private var boxCollapse = 0f
+
+    /** 竖屏视频小窗的高度范围（最高按画面比例、最多页面一半高，最矮 16:9）；不是竖屏视频的小窗时为 null。 */
+    private fun boxRange(width: Int, innerH: Int): Pair<Int, Int>? {
+        if (!portraitVideo || !canPortraitFull || width <= 0 || innerH <= 0) return null
+        val size = player?.videoSize ?: return null
+        if (size.width <= 0 || size.height <= 0) return null
+        val aspect = size.width * size.pixelWidthHeightRatio / size.height
+        val min = width * 9 / 16
+        val tall = minOf(width / aspect, innerH * TALL_BOX).toInt()
+        return if (tall > min) tall to min else null
+    }
+
+    private fun boxHeight(range: Pair<Int, Int>) = (range.first - (range.first - range.second) * boxCollapse).roundToInt()
+
+    private fun innerHeight(root: View) = root.height - root.paddingTop - root.paddingBottom
+
+    /** 小窗的高度跟着画面：竖屏视频撑高（按收缩到哪了），其余 16:9。全屏时和拖动画面时不动。 */
+    private fun applyPlayerBox(animate: Boolean = false) {
+        if (!phoneStack || landscape || vfullShown || pull != null || !::playerView.isInitialized) return
+        val root = findViewById<ConstraintLayout?>(R.id.root) ?: return
+        val lp = playerView.layoutParams as? ConstraintLayout.LayoutParams ?: return
+        if (root.height == 0) {
+            root.doOnLayout { applyPlayerBox() }
+            return
+        }
+        val range = boxRange(root.width, innerHeight(root))
+        val ratio = if (range == null) "16:9" else null
+        val h = range?.let(::boxHeight) ?: 0
+        if (lp.dimensionRatio == ratio && lp.height == h) return
+        if (animate) TransitionManager.beginDelayedTransition(root, ChangeBounds().setDuration(220).setInterpolator(DecelerateInterpolator()))
+        lp.dimensionRatio = ratio
+        lp.height = h
+        playerView.layoutParams = lp
+    }
+
+    /** 列表竖着滚了 [dy]：往上滚先把高小窗收矮，列表在顶上时往下拉把它撑高。返回用掉的距离。 */
+    private fun collapseBy(dy: Int, target: View): Int {
+        if (!phoneStack || landscape || vfullShown || pull != null) return 0
+        val root = findViewById<ConstraintLayout?>(R.id.root) ?: return 0
+        val range = boxRange(root.width, innerHeight(root)) ?: return 0
+        val cur = boxHeight(range)
+        val next = when {
+            dy > 0 -> maxOf(range.second, cur - dy)
+            dy < 0 && !target.canScrollVertically(-1) -> minOf(range.first, cur - dy)
+            else -> cur
+        }
+        if (next == cur) return 0
+        boxCollapse = (range.first - next).toFloat() / (range.first - range.second)
+        applyPlayerBox()
+        return cur - next
     }
 
     /** The arrow under a tall picture: there to say it can be pulled down; gone elsewhere (and then it takes no room). */
@@ -884,6 +1135,7 @@ class PlayActivity : BaseActivity() {
             root.requestApplyInsets()
         }
         root.setBackgroundColor(if (full) Color.BLACK else getColor(R.color.bg))
+        if (!full) applyPlayerBox()
         playerView.setFullscreenButtonState(full)
         updateOverlayTitle()
         syncThinProgress()
@@ -920,11 +1172,7 @@ class PlayActivity : BaseActivity() {
         portraitFull = full
         applyPortraitFull(animate = true)
         applySystemBars()
-        val episodes = details[curSrc]?.lines?.getOrNull(curLine)?.episodes?.size ?: 0
-        if (full && episodes > 1 && Store.swipeTips() < 3) {
-            Store.bumpSwipeTips()
-            flashHud("上滑下一集，下滑上一集", 2_500)
-        }
+        if (full) showFullTip()
     }
 
     /** The details page text: score, year / category / area / status, people, synopsis; the blurred backdrop. */
@@ -1057,15 +1305,21 @@ class PlayActivity : BaseActivity() {
             }
         }
 
+        override fun onRenderedFirstFrame() {
+            handler.removeCallbacks(hideNextCard)
+            handler.post(hideNextCard)
+        }
+
         override fun onVideoSizeChanged(videoSize: VideoSize) {
             if (videoSize.height <= 0) return
             portraitVideo = videoSize.width * videoSize.pixelWidthHeightRatio < videoSize.height
             syncPullArrow()
+            applyPlayerBox(animate = true)
             if (!portraitVideo && portraitFull) setPortraitFull(false)
             if (portraitVideo && canPortraitFull && !portraitFull && !vfullTipShown && Store.vfullTips() < 3) {
                 vfullTipShown = true
                 Store.bumpVfullTips()
-                flashHud("下拉画面，竖屏全屏", 2_500)
+                flashHud("往下拖下面的选集，进入竖屏全屏", 2_500)
             }
             player?.videoFormat?.frameRate?.takeIf { it > 0f }?.let(::matchFrameRate)
             resolution = qualityLabel(videoSize.height)
@@ -1095,6 +1349,7 @@ class PlayActivity : BaseActivity() {
 
         override fun onPlayerError(error: PlaybackException) {
             Log.d("TVP", "player error ${error.errorCodeName} on ${current?.label}")
+            if (retryInPlace(error)) return
             // The server answered with an error or garbage (not a timeout, not a dropped network): its other lines
             // are likely dead too for a while. Live lines are not judged by host.
             val sourceError = error.errorCode in setOf(
@@ -1109,6 +1364,80 @@ class PlayActivity : BaseActivity() {
             setInfo("这条线路播放失败，正在换下一条…")
             failOver()
         }
+    }
+
+    /** 用了哪个解码器、掉了多少帧：卡顿时分得清是网络慢还是电视解不动。 */
+    private val analytics = object : AnalyticsListener {
+        override fun onVideoDecoderInitialized(eventTime: AnalyticsListener.EventTime, decoderName: String, initializedTimestampMs: Long, initializationDurationMs: Long) {
+            videoDecoder = decoderName
+        }
+
+        override fun onAudioDecoderInitialized(eventTime: AnalyticsListener.EventTime, decoderName: String, initializedTimestampMs: Long, initializationDurationMs: Long) {
+            audioDecoder = decoderName
+        }
+
+        override fun onVideoDisabled(eventTime: AnalyticsListener.EventTime, decoderCounters: DecoderCounters) = addFrames(decoderCounters)
+
+        // 播放器每丢 50 帧（或停下时）报一次。不缓冲也会一顿一顿的「卡」就是这种，单独记进日志
+        override fun onDroppedVideoFrames(eventTime: AnalyticsListener.EventTime, droppedFrames: Int, elapsedMs: Long) {
+            droppedSinceLog += droppedFrames
+            val now = SystemClock.elapsedRealtime()
+            if (droppedSinceLog < 50 || now - dropLoggedAt < DROP_LOG_MS) return
+            dropLoggedAt = now
+            PlayLog.add("掉帧 $droppedSinceLog 帧", "${logWhat()}\n最近一次 ${PlayNetStats.ms(elapsedMs)} 内丢了 $droppedFrames 帧")
+            droppedSinceLog = 0
+        }
+    }
+
+    private fun addFrames(counters: DecoderCounters) {
+        counters.ensureUpdated()
+        droppedFrames += counters.droppedBufferCount
+        renderedFrames += counters.renderedOutputBufferCount
+    }
+
+    /**
+     * 能在原线路补救的错误先补救一次，不急着换线：换线要重新解析、重新缓冲，用户看到的就是「又在加载」。
+     * - 直播落后于直播窗口（卡太久，服务器上的分片已经过期）：跳回直播点接着放；
+     * - 已经放起来的线路偶尔断网、超时、服务器报错或解码出错：原位置再准备一次。
+     * 重试后一分钟内又出错才换线；重试后 20 秒还没缓过来，卡顿计时照常换线。
+     */
+    private fun retryInPlace(error: PlaybackException): Boolean {
+        val p = player ?: return false
+        if (!started || replayMode || playJob?.isActive == true) return false
+        val code = error.errorCode
+        val behindLive = code == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW
+        // 服务器明确回了错误（403 / 404 / 返回的不是视频）：原地再试多半还是这样，直接换线
+        val transient = code in 2000..2999 && code !in setOf(
+            PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS,
+            PlaybackException.ERROR_CODE_IO_INVALID_HTTP_CONTENT_TYPE,
+            PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND,
+            PlaybackException.ERROR_CODE_IO_NO_PERMISSION,
+            PlaybackException.ERROR_CODE_IO_CLEARTEXT_NOT_PERMITTED,
+            PlaybackException.ERROR_CODE_IO_READ_POSITION_OUT_OF_RANGE,
+        ) || code == PlaybackException.ERROR_CODE_DECODING_FAILED ||
+            code == PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED ||
+            code == PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED
+        val now = SystemClock.elapsedRealtime()
+        if (!behindLive && !transient || retriedAt > 0 && now - retriedAt < RETRY_WINDOW_MS) return false
+        retriedAt = now
+        retries++
+        PlayLog.add("播放出错，在原线路重试", "${logWhat()}\n${error.errorCodeName}")
+        setInfo(if (behindLive) "回到直播最新画面…" else "网络波动，正在重新连接这条线路…")
+        if (behindLive) {
+            p.seekToDefaultPosition()
+            p.prepare()
+        } else {
+            // 断网、超时多半要过一会儿才恢复：等 2 秒再连，免得立刻又失败、白白用掉这次重试
+            handler.removeCallbacks(retryNow)
+            handler.postDelayed(retryNow, RETRY_DELAY_MS)
+        }
+        handler.removeCallbacks(stall)
+        handler.postDelayed(stall, STALL_MS)
+        return true
+    }
+
+    private val retryNow = Runnable {
+        player?.takeIf { it.playbackState == Player.STATE_IDLE }?.prepare()
     }
 
     /**
@@ -1179,7 +1508,31 @@ class PlayActivity : BaseActivity() {
         val format = player?.videoFormat
         val rate = format?.bitrate?.takeIf { it > 0 }?.let { String.format(Locale.US, " %.1fMbps", it / 1e6) }.orEmpty()
         val size = format?.takeIf { it.height > 0 }?.let { " ${it.width}x${it.height}" }.orEmpty()
-        return "$title$ep · ${current?.label ?: "?"} ·$size$rate".trimEnd(' ', '·')
+        val codec = format?.sampleMimeType?.removePrefix("video/")?.let { " $it" }.orEmpty()
+        return "$title$ep · ${current?.label ?: "?"} ·$size$codec$rate".trimEnd(' ', '·') + decoderText()
+    }
+
+    /** 视频解码器（软解单独标出来）和音频解码器；开了隧道播放也写上。 */
+    private fun decoderText(): String {
+        if (videoDecoder.isEmpty()) return ""
+        val soft = videoDecoder.startsWith("c2.android.") || videoDecoder.startsWith("OMX.google.")
+        // 设置开了不等于用上了：设备或音轨不支持时播放器退回普通方式
+        val tunnel = if (!tunnelRequested) "" else if (player?.isTunnelingEnabled == true) " · 隧道播放" else " · 隧道播放没生效（设备不支持）"
+        return "\n解码：$videoDecoder${if (soft) "（软解）" else ""}${if (audioDecoder.isEmpty()) "" else " · 音频 $audioDecoder"}$tunnel"
+    }
+
+    /** 渲染了多少帧、丢了多少（还在放的这一段也算上）。 */
+    private fun framesText(): String {
+        var dropped = droppedFrames
+        var rendered = renderedFrames
+        player?.videoDecoderCounters?.let { c ->
+            c.ensureUpdated()
+            dropped += c.droppedBufferCount
+            rendered += c.renderedOutputBufferCount
+        }
+        if (rendered + dropped == 0L) return "画面：没有统计到帧" + if (tunnelRequested) "（隧道播放时可能不统计）" else ""
+        val pct = String.format(Locale.US, "%.1f", dropped * 100.0 / (rendered + dropped))
+        return "画面：显示 $rendered 帧 · 掉帧 $dropped 帧（$pct%）"
     }
 
     private fun prefetchState() = if (prefetch != null && prefetchOn()) "开" else "关"
@@ -1209,7 +1562,8 @@ class PlayActivity : BaseActivity() {
         PlayLog.add(
             "播放小结",
             "${logWhat()}\n播放 $minutes 分钟 · 卡顿 $stallCount 次共 ${PlayNetStats.ms(stallTotalMs)} · 换线 $failOvers 次 · " +
-                "${if (metered) "计费网络" else "不计费网络"} · 多连接预取${prefetchState()}\n${netStats.summary()}",
+                "原线路重试 $retries 次 · ${if (metered) "计费网络" else "不计费网络"} · 多连接预取${prefetchState()}\n" +
+                framesText() + (if (adCleaned.isNotEmpty()) "\n去广告：$adRule · ${adCleaned.size} 个播放列表（含预加载的下一集）共剔除 ${adCleaned.values.sum()} 个分片" else "") + "\n${netStats.summary()}",
         )
     }
 
@@ -1244,6 +1598,8 @@ class PlayActivity : BaseActivity() {
         preloadJob?.cancel()
         handler.removeCallbacks(preloadNext)
         stalledThisEpisode = false
+        retriedAt = 0L // 新线路有自己的一次原地重试
+        handler.removeCallbacks(retryNow)
         handler.removeCallbacks(stall)
         player?.stop()
         prefetch?.reset() // the line being left is no longer fetched ahead for, however long the next one takes to resolve
@@ -2799,7 +3155,8 @@ class PlayActivity : BaseActivity() {
         view.overlayFrameLayout?.addView(label, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
         hud = label
 
-        var mode = 0 // 0 undecided, 1 seek, 2 brightness, 3 volume, 4 swiping to another episode, 5 swiped, 6 pulling the picture down
+        // 0 还没定，1 拖进度，2 亮度，3 音量，4 普通切集，5 已经切了（或这一下不算），8 整页跟手切集
+        var mode = 0
         var downRawY = 0f
         var startPos = 0L
         var seekTarget = 0L
@@ -2839,13 +3196,11 @@ class PlayActivity : BaseActivity() {
                             mode = 1
                             startPos = p.currentPosition
                         } else if (portraitVideo && vfullShown && e1.x in view.width * 0.2f..view.width * 0.8f) {
-                            // In the tall full screen, the middle is a feed of episodes; the sides keep brightness (left) and
-                            // volume (right).
-                            mode = 4
-                        } else if (portraitVideo && canPortraitFull && !vfullShown && e1.x in view.width * 0.28f..view.width * 0.72f && beginPull()) {
-                            // A tall picture in the small window: a pull down takes hold of it. From here the touch listener
-                            // below follows the finger (with raw coordinates: the picture moves under it) until it lets go.
-                            mode = 6
+                            // 竖屏全屏的中间是一页页的集：上滑下一集、下滑上一集，整页跟着手指（下面的触摸监听接手）。
+                            // 两边照旧是亮度（左）和音量（右）；退出全屏用右下角的箭头
+                            // 上一次滑动的动画还没走完：这一下不算，免得和它一起连跳两集
+                            mode = if (feed != null) 5 else if (beginFeed(if (e2.y > e1.y) -1 else 1)) 8 else 4
+                            if (mode == 8) feedDrag(e1.y - e2.y)
                         } else if (e1.x < view.width / 2) {
                             mode = 2
                             startBrightness = currentBrightness()
@@ -2855,7 +3210,7 @@ class PlayActivity : BaseActivity() {
                         }
                     }
                     if (mode == 4) {
-                        // In the full screen it is a feed of episodes: swipe up for the next one, down for the previous.
+                        // 接管不了整页时（比如缺卡片布局），普通的上下滑照样切集
                         val pulled = e2.y - e1.y
                         if (abs(pulled) > dp(72)) {
                             mode = 5
@@ -2864,7 +3219,7 @@ class PlayActivity : BaseActivity() {
                         }
                         return true
                     }
-                    if (mode == 5 || mode == 6) return true
+                    if (mode == 5 || mode == 8) return true
                     view.hideController()
                     val dx = e2.x - e1.x
                     val up = e1.y - e2.y
@@ -2893,14 +3248,21 @@ class PlayActivity : BaseActivity() {
 
         view.setOnTouchListener { v, event ->
             if (event.actionMasked == MotionEvent.ACTION_DOWN) downRawY = event.rawY
-            if (mode == 6) {
-                // The picture is being pulled: it follows the finger, grows with it, and on letting go either goes on to the
-                // full screen or springs back.
+            // 手指的速度用屏幕坐标算：画面在手指下面跟着动，用它自己的坐标会算错
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) velocity.clear()
+            MotionEvent.obtain(event).also {
+                it.setLocation(event.rawX, event.rawY)
+                velocity.addMovement(it)
+                it.recycle()
+            }
+            if (mode == 8) {
+                // 整页跟着手指走，松手时要么切过去、要么弹回
                 when (event.actionMasked) {
-                    MotionEvent.ACTION_MOVE -> pull?.let { setPull(((event.rawY - downRawY) / it.range).coerceIn(0f, 1f)) }
+                    MotionEvent.ACTION_MOVE -> feedDrag(downRawY - event.rawY)
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        velocity.computeCurrentVelocity(1000)
+                        endFeed(event.actionMasked == MotionEvent.ACTION_UP, velocity.yVelocity)
                         mode = 0
-                        endPull(event.actionMasked == MotionEvent.ACTION_UP)
                     }
                 }
                 return@setOnTouchListener true
@@ -3005,6 +3367,7 @@ class PlayActivity : BaseActivity() {
         preloadManager = null
         prefetch?.release()
         prefetchPool.shutdownNow()
+        velocity.recycle()
         super.onDestroy()
     }
 }

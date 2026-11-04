@@ -50,21 +50,8 @@
         app:show_buffering="when_playing"
         app:use_controller="true" />
 
-    <!-- Under a tall picture: pull it down for the full screen. Gone (and no room taken) for everything else. -->
-    <ImageView
-        android:id="@+id/pullArrow"
-        android:layout_width="0dp"
-        android:layout_height="30dp"
-        android:alpha="0.85"
-        android:contentDescription="下拉全屏"
-        android:scaleType="centerInside"
-        android:src="@drawable/ic_pull_down"
-        android:visibility="gone"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/player" />
-
-    <LinearLayout
+    <!-- 小窗下面那一栏：竖屏视频时列表上滚先收矮播放器，往下拖进竖屏全屏（见 CollapsingContent） -->
+    <com.tv.player.ui.CollapsingContent
         android:id="@+id/content"
         android:layout_width="0dp"
         android:layout_height="0dp"
@@ -72,7 +59,18 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/pullArrow">
+        app:layout_constraintTop_toBottomOf="@id/player">
+
+        <!-- 竖屏视频时显示：往下拖这一栏（从这个把手或下面任何地方）进竖屏全屏，和 B 站一样 -->
+        <ImageView
+            android:id="@+id/pullArrow"
+            android:layout_width="match_parent"
+            android:layout_height="30dp"
+            android:alpha="0.85"
+            android:contentDescription="下拉全屏"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_pull_down"
+            android:visibility="gone" />
 
         <TextView
             android:id="@+id/info"
@@ -161,7 +159,7 @@
             android:paddingEnd="12dp"
             android:paddingBottom="12dp" />
 
-    </LinearLayout>
+    </com.tv.player.ui.CollapsingContent>
 
     <!-- The tall full screen (short dramas): the picture above grows to fill the screen and this layer fades in over it. -->
     <FrameLayout
@@ -238,6 +236,18 @@
             android:src="@drawable/ic_cast" />
 
         <!-- Where the episode is, while the controls are away (they carry their own time bar). -->
+        <!-- 右下角常驻的收起按钮（和 B 站一样）：回到小窗；上下滑留给切集 -->
+        <ImageButton
+            android:id="@+id/vExit"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:layout_gravity="bottom|end"
+            android:layout_marginEnd="16dp"
+            android:layout_marginBottom="96dp"
+            android:background="@drawable/bg_overlay_button"
+            android:contentDescription="退出全屏"
+            android:src="@drawable/ic_collapse_up" />
+
         <ProgressBar
             android:id="@+id/vProgress"
             style="?android:attr/progressBarStyleHorizontal"
@@ -247,6 +257,53 @@
             android:max="1000"
             android:progressTint="@android:color/white"
             android:progressBackgroundTint="#33FFFFFF" />
+
+    </FrameLayout>
+
+    <!-- 竖屏全屏里上滑：跟着手指从下面滑上来的下一集（海报 + 集名），切过去后等第一帧画面出来再淡出 -->
+    <FrameLayout
+        android:id="@+id/vNext"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:background="@android:color/black"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <ImageView
+            android:id="@+id/vNextPoster"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:alpha="0.45"
+            android:importantForAccessibility="no"
+            android:scaleType="centerCrop" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:gravity="center_horizontal"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/vNextName"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@android:color/white"
+                android:textSize="22sp"
+                android:textStyle="bold" />
+
+            <ProgressBar
+                android:id="@+id/vNextSpin"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:layout_marginTop="16dp"
+                android:indeterminateTint="@android:color/white"
+                android:visibility="invisible" />
+
+        </LinearLayout>
 
     </FrameLayout>
 

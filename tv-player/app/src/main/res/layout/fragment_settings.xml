@@ -783,6 +783,48 @@
 
                     </com.google.android.material.chip.ChipGroup>
 
+                    <!-- 隧道播放：和帧率一样只在电视上显示 -->
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:text="隧道播放"
+                        android:textAppearance="@style/TextAppearance.TvPlayer.Section" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="解码后的画面直接交给电视的显示硬件，部分电视上画面更顺、掉帧更少。电视不支持时自动按普通方式播放；开了以后黑屏、没声音或音画不同步，就关掉。下次播放时生效。"
+                        android:textAppearance="@style/TextAppearance.TvPlayer.Caption"
+                        android:textColor="@color/on_surface_variant" />
+
+                    <com.google.android.material.chip.ChipGroup
+                        android:id="@+id/tunneling"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        app:selectionRequired="true"
+                        app:singleSelection="true">
+
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/tunnelingOn"
+                            style="@style/Widget.TvPlayer.Chip"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:checkable="true"
+                            android:text="开启" />
+
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/tunnelingOff"
+                            style="@style/Widget.TvPlayer.Chip"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:checkable="true"
+                            android:text="关闭" />
+
+                    </com.google.android.material.chip.ChipGroup>
+
                 </LinearLayout>
 
             </LinearLayout>

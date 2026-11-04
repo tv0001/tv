@@ -56,10 +56,15 @@ object Store {
 
     /** Sources from the subscription (or the bundled copy), plus the extra CMS sites that were verified with a real search. */
     fun subscribed(): List<VodSource> =
-        parseSources(prefs.getString("config", null) ?: asset("best.json")) +
+        parseSources(prefs.getString("config", null) ?: bundledConfig) +
             runCatching { parseSources(prefs.getString("cms", null) ?: asset("cms.json")) }.getOrDefault(emptyList())
 
     fun saveCms(text: String) = prefs.edit().putString("cms", text).apply()
+
+    private val bundledConfig by lazy { asset("best.json") }
+
+    /** 订阅里的 m3u8 去广告规则（见 AdFilter）。 */
+    fun adRules(): List<AdFilter.Rule> = AdFilter.rules(prefs.getString("config", null) ?: bundledConfig)
 
     private fun authority(api: String) = runCatching { URL(api).authority.lowercase() }.getOrDefault(api)
 
@@ -267,6 +272,11 @@ object Store {
     fun matchFrameRate(): Boolean = prefs.getBoolean("match_frame_rate", false)
 
     fun setMatchFrameRate(on: Boolean) = prefs.edit().putBoolean("match_frame_rate", on).apply()
+
+    /** 电视上的隧道播放（解码后的画面直接交给显示硬件）。默认关：有的电视开了会黑屏或音画不同步。 */
+    fun tunneling(): Boolean = prefs.getBoolean("tunneling", false)
+
+    fun setTunneling(on: Boolean) = prefs.edit().putBoolean("tunneling", on).apply()
 
     /** 接收手机投屏（DLNA，见 DlnaRenderer）。没选过时电视上开、手机上关。 */
     fun dlnaReceiver(default: Boolean): Boolean = prefs.getBoolean("dlna_receiver", default)

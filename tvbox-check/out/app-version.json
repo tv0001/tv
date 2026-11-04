@@ -1,9 +1,9 @@
 {
-  "versionCode": 31,
-  "versionName": "1.0.30",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.30.apk",
-  "sha256": "bd55a61ebdb68c06a9a7c5c8ec92cf19588d228b95a547a44a85803cff656b5a",
-  "size": 4552653,
-  "notes": "播放更顺：播放器和测速共用网络连接、域名解析缓存并优先 IPv4、不计费网络上持续缓冲、等当前这集缓冲够了再预加载下一集；新增播放日志（设置里查看卡顿记录）；安装包从 6.5MB 减到 4.6MB。",
+  "versionCode": 32,
+  "versionName": "1.0.31",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.31.apk",
+  "sha256": "ebc4664345cd7293569d171e4f0e13bfe0d4f77eb36de3a3b942e70fc2437053",
+  "size": 4560901,
+  "notes": "播放更稳：线路偶尔断网先在原线路重连、不急着换线；按订阅规则去掉片源插的广告；播放日志记录解码器和掉帧；电视上可开隧道播放。手机看竖屏短剧：小窗按竖屏撑高、往下拖下面的选集进全屏，全屏里上下滑切集（跟手），右下角箭头退出。",
   "force": false
 }

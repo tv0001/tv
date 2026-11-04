@@ -171,6 +171,9 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         val matchFrameRate = view.findViewById<ChipGroup>(R.id.matchFrameRate)
         matchFrameRate.check(if (Store.matchFrameRate()) R.id.frameRateOn else R.id.frameRateOff)
         matchFrameRate.setOnCheckedStateChangeListener { _, ids -> Store.setMatchFrameRate(ids.firstOrNull() == R.id.frameRateOn) }
+        val tunneling = view.findViewById<ChipGroup>(R.id.tunneling)
+        tunneling.check(if (Store.tunneling()) R.id.tunnelingOn else R.id.tunnelingOff)
+        tunneling.setOnCheckedStateChangeListener { _, ids -> Store.setTunneling(ids.firstOrNull() == R.id.tunnelingOn) }
 
         val hotLayout = view.findViewById<ChipGroup>(R.id.hotLayout)
         hotLayout.check(if (Store.hotLayout() == "rows") R.id.hotLayoutRows else R.id.hotLayoutTabs)
