@@ -736,6 +736,7 @@ class PlayActivity : BaseActivity() {
         // A layout that was rebuilt while the tall full screen is on (turned back from sideways) goes straight to it.
         findViewById<CollapsingContent?>(R.id.content)?.let {
             it.onPreScroll = ::collapseBy
+            it.list = findViewById(R.id.episodes)
             it.onPullStart = ::sheetPullStart
             it.onPull = ::sheetPull
             it.onPullEnd = ::sheetPullEnd
@@ -834,19 +835,17 @@ class PlayActivity : BaseActivity() {
         setPose(Pose(1f + (g.scale - 1f) * t, g.dy * t, 1f - t))
     }
 
-    /** 这一栏能不能往下拖：竖屏视频的小窗，列表在顶上，没有别的拖动在进行。 */
-    private fun sheetPullStart(): Boolean {
-        if (!phoneStack || landscape || vfullShown || pull != null || feed != null || !portraitVideo || !canPortraitFull) return false
-        return findViewById<View?>(R.id.episodes)?.canScrollVertically(-1) != true
-    }
+    /** 这一栏能不能往下拖进全屏：竖屏视频的小窗，没有别的拖动在进行（列表的情况由 CollapsingContent 先判断）。 */
+    private fun sheetPullStart(): Boolean =
+        phoneStack && !landscape && !vfullShown && pull == null && feed == null && portraitVideo && canPortraitFull
 
     /** 这一栏被往下拖了 [dy] 像素（往回拖是负数）：小窗没撑到最高就先撑高，撑满了再拖着这一栏进全屏。 */
     private fun sheetPull(dy: Float) {
         var rest = dy
         if (pull == null) {
-            val list = findViewById<View?>(R.id.episodes)
-            if (rest > 0 && boxCollapse > 0f && list != null) {
-                rest += collapseBy(-rest.roundToInt(), list) // 用掉的是负数
+            // 从这一栏拖：不管列表滚到哪，先把收矮的小窗撑高（从列表里拖、列表没在顶上时根本走不到这里）
+            if (rest > 0 && boxCollapse > 0f) {
+                rest += collapseBy(-rest.roundToInt(), null) // 用掉的是负数
                 if (rest <= 0f) return
             }
             if (rest <= 0f || !beginPull()) return
@@ -1074,15 +1073,18 @@ class PlayActivity : BaseActivity() {
         playerView.layoutParams = lp
     }
 
-    /** 列表竖着滚了 [dy]：往上滚先把高小窗收矮，列表在顶上时往下拉把它撑高。返回用掉的距离。 */
-    private fun collapseBy(dy: Int, target: View): Int {
+    /**
+     * 竖着滚了 [dy]：往上滚先把高小窗收矮，往下拉把它撑高。[target] 是在滚的列表，它没在顶上时往下拉归列表自己；
+     * 为 null 时（拖的是这一栏的其余地方）不管列表在哪都撑高。返回用掉的距离。
+     */
+    private fun collapseBy(dy: Int, target: View?): Int {
         if (!phoneStack || landscape || vfullShown || pull != null) return 0
         val root = findViewById<ConstraintLayout?>(R.id.root) ?: return 0
         val range = boxRange(root.width, innerHeight(root)) ?: return 0
         val cur = boxHeight(range)
         val next = when {
             dy > 0 -> maxOf(range.second, cur - dy)
-            dy < 0 && !target.canScrollVertically(-1) -> minOf(range.first, cur - dy)
+            dy < 0 && target?.canScrollVertically(-1) != true -> minOf(range.first, cur - dy)
             else -> cur
         }
         if (next == cur) return 0
