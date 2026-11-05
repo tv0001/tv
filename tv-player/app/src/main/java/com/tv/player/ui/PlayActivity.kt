@@ -15,7 +15,6 @@ import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.RenderEffect
 import android.graphics.Shader
-import android.graphics.drawable.ColorDrawable
 import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
@@ -37,6 +36,7 @@ import androidx.constraintlayout.widget.ConstraintSet
 import android.util.Rational
 import android.view.GestureDetector
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
@@ -167,6 +167,9 @@ class PlayActivity : BaseActivity() {
         private const val DROP_LOG_MS = 60_000L // 掉帧最多这么久记一条
         private const val MAX_BUFFER_MS = 50_000
         private const val SAVE_MS = 10_000L
+        private const val TAP_SEEK_STEP_MS = 10_000L // 双击两侧一下跳这么多
+        private const val TAP_SEEK_WINDOW_MS = 700L // 双击过后这么久之内同一侧单点也接着跳
+        private const val TAP_SEEK_EDGE = 0.3f // 画面左右各这么宽算「两侧」，中间双击还是暂停
         private const val MAX_SKIP = 300
         private const val NEXT_CARD_MS = 10_000L // 离一集结束还有这么久时提示下一集
         private const val NEXT_CARD_MIN_MS = 5 * 60_000L // 短于这个的（短剧）照旧直接连播，不弹卡片
@@ -402,7 +405,7 @@ class PlayActivity : BaseActivity() {
     private var linesView: RecyclerView? = null
     private var episodesView: RecyclerView? = null
     private var epLabel: TextView? = null
-    private var hud: TextView? = null
+    private var hud: GestureHud? = null
     private val lineAdapter = ChipAdapter { onLineClick(it) }
     private var lineCount = 0 // the rows that are lines; the row after them opens the panel listing all of them
     private var lineLabels: List<String> = emptyList()
@@ -2829,13 +2832,11 @@ class PlayActivity : BaseActivity() {
 
     // ---- remote control (TV) -------------------------------------------------------------------------------------
 
-    private val hideHud = Runnable { hud?.visibility = View.GONE }
+    private val hideHud = Runnable { hud?.hide() }
 
-    private fun flashHud(text: String, ms: Long = 900) {
-        hud?.apply {
-            this.text = text
-            visibility = View.VISIBLE
-        }
+    /** [icon] 不为 0 时前面带图标；[progress] 在 0..1 之间时下面带一条进度条。 */
+    private fun flashHud(text: String, ms: Long = 900, icon: Int = 0, progress: Float = -1f) {
+        hud?.show(text, icon, progress)
         handler.removeCallbacks(hideHud)
         handler.postDelayed(hideHud, ms)
     }
@@ -2861,7 +2862,7 @@ class PlayActivity : BaseActivity() {
                         val delta = if (event.keyCode == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD) 30_000L else -30_000L
                         val target = (p.currentPosition + delta).coerceIn(0L, p.duration)
                         p.seekTo(target)
-                        flashHud(if (delta > 0) "快进 30 秒  ${formatTime(target)}" else "快退 30 秒  ${formatTime(target)}")
+                        flashHud(if (delta > 0) "快进 30 秒  ${formatTime(target)}" else "快退 30 秒  ${formatTime(target)}", icon = seekIcon(delta > 0), progress = target.toFloat() / p.duration)
                     }
                     return true
                 }
@@ -2931,7 +2932,7 @@ class PlayActivity : BaseActivity() {
                                 val target = (p.currentPosition + delta).coerceIn(0L, maxOf(0L, p.duration))
                                 p.seekTo(target)
                                 playerView.hideController()
-                                flashHud(if (delta > 0) "快进 10 秒  ${formatTime(target)}" else "快退 10 秒  ${formatTime(target)}")
+                                flashHud(if (delta > 0) "快进 10 秒  ${formatTime(target)}" else "快退 10 秒  ${formatTime(target)}", icon = seekIcon(delta > 0), progress = target.toFloat() / p.duration)
                             } else {
                                 // 按住不放：只挪目标、显示要跳到哪，不每次都 seek（每次 seek 都要重新请求分片）；
                                 // 松手时跳，万一收不到松手事件，1 秒没有新按键也跳
@@ -2946,7 +2947,7 @@ class PlayActivity : BaseActivity() {
                                 seekPending = SeekRamp.advance(seekPending, forward, event.eventTime - event.downTime, event.eventTime - seekLastAt, limit)
                                 seekLastAt = event.eventTime
                                 val moved = seekPending - seekFrom
-                                flashHud("${if (moved >= 0) "快进" else "快退"} ${formatTime(abs(moved))}    ${formatTime(seekPending)} / ${formatTime(p.duration)}", 1_500)
+                                flashHud("${if (moved >= 0) "快进" else "快退"} ${formatTime(abs(moved))}    ${formatTime(seekPending)} / ${formatTime(p.duration)}", 1_500, seekIcon(moved >= 0), seekPending.toFloat() / p.duration)
                                 handler.removeCallbacks(commitSeek)
                                 handler.postDelayed(commitSeek, 1_000)
                             }
@@ -2980,7 +2981,8 @@ class PlayActivity : BaseActivity() {
         seekPending = -1
         Log.d("TVP", "held seek: ${formatTime(seekFrom)} -> ${formatTime(target)}")
         player?.seekTo(target)
-        flashHud("跳到 ${formatTime(target)}")
+        val duration = player?.duration ?: 0L
+        flashHud("跳到 ${formatTime(target)}", icon = seekIcon(target >= seekFrom), progress = if (duration > 0) target.toFloat() / duration else -1f)
     }
 
     // ---- 下一集提示 ------------------------------------------------------------------------------------------------
@@ -3146,16 +3148,65 @@ class PlayActivity : BaseActivity() {
     private fun setupGestures() {
         val view = playerView
         val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val label = TextView(this).apply {
-            visibility = View.GONE
-            setTextColor(Color.WHITE)
-            textSize = 18f
-            gravity = Gravity.CENTER
-            setPadding(dp(20), dp(10), dp(20), dp(10))
-            background = ColorDrawable(0xAA000000.toInt())
-        }
-        view.overlayFrameLayout?.addView(label, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+        val label = GestureHud(this)
+        val wrap = FrameLayout.LayoutParams.WRAP_CONTENT
+        view.overlayFrameLayout?.addView(label, FrameLayout.LayoutParams(wrap, wrap, Gravity.CENTER))
         hud = label
+        val speedTip = SpeedTip(this)
+        view.overlayFrameLayout?.addView(speedTip, FrameLayout.LayoutParams(wrap, wrap, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(20) })
+        // 双击两侧快进 / 快退：贴边的半个椭圆，宽度显示时按画面宽度定
+        val ripples = listOf(TapSeekRipple(this, false), TapSeekRipple(this, true))
+        ripples.forEachIndexed { i, r ->
+            view.overlayFrameLayout?.addView(r, FrameLayout.LayoutParams(wrap, FrameLayout.LayoutParams.MATCH_PARENT, if (i == 0) Gravity.START else Gravity.END))
+        }
+        val hideRipples = Runnable { ripples.forEach { it.hide() } }
+        // 连着点的那一串：哪一侧、攒了几秒、最后一下什么时候点的
+        var tapSide = 0
+        var tapTotalMs = 0L // 这一串实际跳了多少（到了开头 / 片尾前 15 秒就跳不满 10 秒）
+        var tapAt = 0L
+        var tapUsedDown = -1L // 被连点快进用掉的那次按下：它之后的「单击确认」不再开关控制栏
+        var doubleTapDown = -1L // 最近一次双击的第二下：按住不放也不进倍速
+
+        // 双击落在哪一侧：-1 左（快退）、1 右（快进）、0 中间或这时不能拖进度（直播、竖屏全屏的一页页切集）
+        fun sideOf(e: MotionEvent): Int {
+            val p = player ?: return 0
+            if (!canSeek() || p.duration <= 0 || (portraitVideo && vfullShown)) return 0
+            return when {
+                e.x < view.width * TAP_SEEK_EDGE -> -1
+                e.x > view.width * (1 - TAP_SEEK_EDGE) -> 1
+                else -> 0
+            }
+        }
+
+        fun tapSeek(side: Int) {
+            val p = player ?: return
+            val now = SystemClock.uptimeMillis()
+            if (side != tapSide || now - tapAt > TAP_SEEK_WINDOW_MS) tapTotalMs = 0L
+            tapSide = side
+            tapAt = now
+            // 往前最多到结尾前 15 秒（和遥控器按住快进一样）：一下跳到结尾会直接换集，后面几下还会跳进下一集
+            val cur = p.currentPosition
+            val target = if (side > 0) minOf(cur + TAP_SEEK_STEP_MS, maxOf(cur, p.duration - 15_000L)) else maxOf(0L, cur - TAP_SEEK_STEP_MS)
+            if (target != cur) p.seekTo(target)
+            tapTotalMs += abs(target - cur)
+            view.hideController()
+            label.hide()
+            val r = ripples[if (side < 0) 0 else 1]
+            ripples[if (side < 0) 1 else 0].hide()
+            r.layoutParams = r.layoutParams.also { it.width = (view.width * 0.36f).toInt() }
+            val secs = ((tapTotalMs + 500) / 1000).toInt()
+            r.show(
+                when {
+                    secs > 0 -> "${if (side < 0) "快退" else "快进"} $secs 秒\n${formatTime(target)}"
+                    side < 0 -> "已到开头"
+                    else -> "快到结尾了"
+                },
+            )
+            handler.removeCallbacks(hideRipples)
+            handler.postDelayed(hideRipples, TAP_SEEK_WINDOW_MS)
+        }
+
+        fun inTapSeries() = SystemClock.uptimeMillis() - tapAt < TAP_SEEK_WINDOW_MS
 
         // 0 还没定，1 拖进度，2 亮度，3 音量，4 普通切集，5 已经切了（或这一下不算），8 整页跟手切集
         var mode = 0
@@ -3170,23 +3221,54 @@ class PlayActivity : BaseActivity() {
             object : GestureDetector.SimpleOnGestureListener() {
                 override fun onDown(e: MotionEvent) = true
 
+                // 双击两侧之后，同一侧再单点也接着攒（YouTube 的做法），不用每次都双击
+                // 点到中间或另一侧就结束这一串，那一下照常算（另一侧要双击才开始往那边跳）
+                override fun onSingleTapUp(e: MotionEvent): Boolean {
+                    if (inTapSeries()) {
+                        if (sideOf(e) == tapSide) {
+                            tapSeek(tapSide)
+                            tapUsedDown = e.downTime
+                        } else {
+                            tapAt = 0L
+                        }
+                    }
+                    return false
+                }
+
                 override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                    if (e.downTime == tapUsedDown) return true // 这一下已经拿去快进了
                     if (controllerShown) view.hideController() else view.showController()
                     return true
                 }
 
+                // onDoubleTap 拿到的是第一下的按下，长按回调拿到的是第二下的，所以第二下要在这里记
+                override fun onDoubleTapEvent(e: MotionEvent): Boolean {
+                    if (e.actionMasked == MotionEvent.ACTION_DOWN) doubleTapDown = e.downTime
+                    return false
+                }
+
                 override fun onDoubleTap(e: MotionEvent): Boolean {
-                    player?.let { if (it.isPlaying) it.pause() else it.play() }
+                    val side = sideOf(e)
+                    if (side != 0) {
+                        tapSeek(side)
+                    } else if (!inTapSeries()) {
+                        player?.let { if (it.isPlaying) it.pause() else it.play() }
+                    }
                     return true
                 }
 
                 override fun onLongPress(e: MotionEvent) {
                     if (isLive && !replayMode) return
+                    if (inTapSeries() || e.downTime == doubleTapDown) return
                     speedBoost = true
                     val boost = maxOf(2f, Store.playSpeed()) // at 3× already, holding must not slow it down
                     player?.setPlaybackSpeed(boost)
-                    label.text = "${boost}×".replace(".0×", "×") + " 倍速"
-                    label.visibility = View.VISIBLE
+                    view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                    view.hideController()
+                    // 竖屏全屏顶上有返回、标题、选集那一排，放到它下面
+                    (speedTip.layoutParams as FrameLayout.LayoutParams).topMargin = dp(if (portraitVideo && vfullShown) 76 else 20)
+                    speedTip.requestLayout()
+                    speedTip.show("${boost}×".replace(".0×", "×") + " 倍速播放中")
                 }
 
                 override fun onScroll(e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
@@ -3225,24 +3307,33 @@ class PlayActivity : BaseActivity() {
                     view.hideController()
                     val dx = e2.x - e1.x
                     val up = e1.y - e2.y
+                    handler.removeCallbacks(hideHud) // 别让之前的提示到点把正在拖的这个收掉
                     when (mode) {
                         1 -> {
                             seekTarget = (startPos + (dx / view.width * 90_000).toLong()).coerceIn(0, p.duration)
-                            label.text = "${formatTime(seekTarget)} / ${formatTime(p.duration)}"
+                            val moved = seekTarget - startPos
+                            label.show(
+                                "${if (moved >= 0) "快进" else "快退"} ${formatTime(abs(moved))}    ${formatTime(seekTarget)} / ${formatTime(p.duration)}",
+                                seekIcon(moved >= 0),
+                                seekTarget.toFloat() / p.duration,
+                            )
                         }
                         2 -> {
                             val b = (startBrightness + up / view.height * 1.2f).coerceIn(0.02f, 1f)
                             window.attributes = window.attributes.also { it.screenBrightness = b }
-                            label.text = "亮度 ${(b * 100).roundToInt()}%"
+                            label.show("亮度 ${(b * 100).roundToInt()}%", R.drawable.ic_hud_brightness, b)
                         }
                         3 -> {
                             val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
                             val v = (startVolume + up / view.height * max * 1.2f).roundToInt().coerceIn(0, max)
                             audio.setStreamVolume(AudioManager.STREAM_MUSIC, v, 0)
-                            label.text = "音量 $v/$max"
+                            label.show(
+                                "音量 ${v * 100 / maxOf(1, max)}%",
+                                if (v == 0) R.drawable.ic_hud_volume_off else R.drawable.ic_hud_volume,
+                                v.toFloat() / maxOf(1, max),
+                            )
                         }
                     }
-                    label.visibility = View.VISIBLE
                     return true
                 }
             },
@@ -3275,9 +3366,11 @@ class PlayActivity : BaseActivity() {
                 if (speedBoost) {
                     player?.setPlaybackSpeed(Store.playSpeed())
                     speedBoost = false
+                    speedTip.hide()
                 }
+                // 只收手势自己的提示；别的提示（比如刚切的集名）按自己的时间走
+                if (mode in 1..3) label.hide()
                 mode = 0
-                label.visibility = View.GONE
                 // PlayerView.performClick toggles the controller by itself, and the confirmed tap above toggles it again:
                 // on a phone that cancelled out and a tap changed nothing. On TV the click opens the full screen.
                 if (event.actionMasked == MotionEvent.ACTION_UP && isTv) v.performClick()
@@ -3295,6 +3388,8 @@ class PlayActivity : BaseActivity() {
             0.5f
         }
     }
+
+    private fun seekIcon(forward: Boolean) = if (forward) R.drawable.ic_hud_forward else R.drawable.ic_hud_rewind
 
     private fun formatTime(ms: Long): String {
         val s = ms / 1000

@@ -1,9 +1,9 @@
 {
-  "versionCode": 33,
-  "versionName": "1.0.32",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.32.apk",
-  "sha256": "89db91dd04dd8d655a3f9b2e49fde3f88bfc9ae06211569f6304eb5138237973",
-  "size": 4560901,
-  "notes": "修复：手机看竖屏短剧时，往下拖小窗下面那一栏进不了全屏（选集列表滚到当前集时会失效）；把手换成 B 站样式。",
+  "versionCode": 34,
+  "versionName": "1.0.33",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.33.apk",
+  "sha256": "90c68b4217c8bf0900bfb45a7f1fb886400d56cc14f86891dba53e66b7092b28",
+  "size": 4569373,
+  "notes": "手机播放手势：双击画面左右两侧快退 / 快进 10 秒，接着在同一侧点还能继续跳，双击中间仍是暂停；长按 2 倍速时顶上显示「倍速播放中」并震动一下；调亮度、音量、进度的提示带图标和进度条，电视遥控器快进时也有进度条。",
   "force": false
 }
