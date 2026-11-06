@@ -456,6 +456,17 @@ class PlayActivity : BaseActivity() {
     private var portraitVideo = false
     private var vfullTipShown = false
 
+    /**
+     * 换集、换线路时不自动弹控制栏：attempt 里的 stop() 让播放器回到 IDLE，PlayerView 会当成「该一直显示」把控制栏
+     * 弹出来，起播后再按超时收起，每换一集都闪一次（竖屏短剧一页页刷时最明显）。起播（或全部失败）后恢复。
+     */
+    private var quietControls = false
+
+    private fun setQuietControls(on: Boolean) {
+        quietControls = on
+        if (::playerView.isInitialized) playerView.controllerAutoShow = !on
+    }
+
     /** 手机横屏全屏锁屏（腾讯视频、B 站都有）：锁住后手势、控制栏都不响应，点画面只露出锁键；转回竖屏自动解锁 */
     private var locked = false
     private var orientationBeforeLock = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
@@ -694,6 +705,8 @@ class PlayActivity : BaseActivity() {
             // 控制栏出来时续播提示会压在进度条上：先收起（点提示本身的「从头播放」不受影响，它在控制栏上面）
             if (controllerShown) resumeTip?.takeIf { t -> t.visibility == View.VISIBLE }?.let { t -> handler.removeCallbacks(hideResumeTip); fadeTo(t, false, gone = true) }
         })
+        // 先于 setPlayer：挂上播放器时 PlayerView 立刻判断要不要显示，换布局后的新 PlayerView 也照样不自动弹
+        playerView.controllerAutoShow = !quietControls
         playerView.player = controlPlayer ?: player
         // The controller's own gear opens the same panel as the app's: one place for speed, picture, subtitles and the rest.
         playerView.findViewById<View?>(androidx.media3.ui.R.id.exo_settings)?.setOnClickListener { showPlaySettings() }
@@ -1463,6 +1476,7 @@ class PlayActivity : BaseActivity() {
             }
             when (state) {
                 Player.STATE_READY -> {
+                    if (quietControls) setQuietControls(false)
                     endStall("缓过来了")
                     if (!started) Log.d("TVP", "ready on ${current?.label}")
                     // A few seconds into the episode, once it plays steadily, the next one is loaded ahead.
@@ -1505,7 +1519,12 @@ class PlayActivity : BaseActivity() {
                     }
                     val count = details[curSrc]?.lines?.getOrNull(curLine)?.episodes?.size ?: 0
                     if (nextCancelled) setInfo("这一集播完了，可以在选集里挑下一集")
-                    else if (curEp + 1 < count) selectEpisode(curEp + 1)
+                    else if (curEp + 1 < count) {
+                        // 播完那一下 PlayerView 会把控制栏弹出来（不管它先收到还是我们先收到）：自动连播时收回去
+                        setQuietControls(true)
+                        playerView.hideController()
+                        selectEpisode(curEp + 1)
+                    }
                 }
             }
         }
@@ -1809,6 +1828,8 @@ class PlayActivity : BaseActivity() {
         retriedAt = 0L // 新线路有自己的一次原地重试
         handler.removeCallbacks(retryNow)
         handler.removeCallbacks(stall)
+        // 控制栏这时没出来就别让它自己弹出来；用户正开着的（比如刚点了下一集）照常按超时收起
+        if (!controllerShown) setQuietControls(true)
         player?.stop()
         prefetch?.reset() // the line being left is no longer fetched ahead for, however long the next one takes to resolve
         started = false
@@ -1824,6 +1845,9 @@ class PlayActivity : BaseActivity() {
                 quickFirst = null
                 val cand = quick?.first?.also { tried += it.url } ?: nextCandidate()
                 if (cand == null) {
+                    // 播放器早已是 IDLE，只恢复开关不会再触发显示：主动把控制栏拿出来，不然只剩一块黑屏
+                    setQuietControls(false)
+                    playerView.showController()
                     player?.stop()
                     prefetch?.reset()
                     allFailed = true
@@ -3001,6 +3025,7 @@ class PlayActivity : BaseActivity() {
         val url = CatchupUrl.build(c.template, show.startMs, show.endMs)
         replayMode = true
         gen++
+        setQuietControls(false) // 回看不走 attempt，加载中切过来时别留着「不自动弹」
         handler.removeCallbacks(stall)
         handler.removeCallbacks(rescue)
         probeJobs.forEach { it.cancel() }
