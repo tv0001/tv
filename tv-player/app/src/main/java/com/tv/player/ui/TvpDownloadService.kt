@@ -1,6 +1,7 @@
 package com.tv.player.ui
 
 import android.app.Notification
+import androidx.core.app.ServiceCompat
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.offline.Download
 import androidx.media3.exoplayer.offline.DownloadManager
@@ -31,7 +32,7 @@ class TvpDownloadService : DownloadService(NOTIFY_ID, DEFAULT_FOREGROUND_NOTIFIC
      */
     override fun onTimeout(startId: Int, fgsType: Int) {
         downloadManager.pauseDownloads()
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 

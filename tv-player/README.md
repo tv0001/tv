@@ -78,7 +78,19 @@
 ```bash
 cd tv-player
 gradle assembleDebug     # app/build/outputs/apk/debug/app-debug.apk
+gradle assembleDebug -Plegacy   # 兼容包：app/build/outputs/apk/debug/app-legacy-debug.apk
 ```
+
+### 兼容包（Android 5.0 – 7.x 的老电视、老盒子）
+
+主版本最低 Android 8.0。带 `-Plegacy` 打出的兼容包最低 Android 5.0，代码和主版本是同一份，区别只有：
+
+- 老系统没有的功能自动关掉：手机小窗播放（8.0）、按片源切换刷新率（6.0）、通知分类（8.0）
+- 补了一套 Mozilla 根证书（`app/src/legacy/resources/cacert.pem`，取自 https://curl.se/ca/cacert.pem）：Android 7.1.1 以下的系统不认 Let's Encrypt、DigiCert G2 等新根证书，不补的话豆瓣、很多片源都连不上。只在兼容包、只在 7.x 及以下的系统生效（见 `LegacyTls`）
+- 老系统画不出来的资源换成兼容写法（`app/src/legacy/res`：桌面图标、电视横幅、海报占位图）；海报和源列表的焦点框在 6.0 以下画成背景（见 `legacyFocusRing`）
+- 自动更新读 `app-version-legacy.json`，不会升级成装不上的主版本
+
+两种包共用 `app/build`，打另一种时 Gradle 会清掉上一种的产物：打完一种先签名拷走，再打另一种。Android 4.4 不支持（播放器 Media3、OkHttp 等依赖最低都是 5.0）。
 
 ## 测试
 
@@ -135,5 +147,18 @@ $ANDROID_HOME/build-tools/<版本>/apksigner sign --ks <你的.keystore> \
 # 3. 生成版本说明（读取 output-metadata.json 里的版本号，计算 sha256 和大小）
 python3 scripts/make-update-manifest.py releases/TV-Player-1.0.2.apk "<APK 的下载地址>" "更新说明" > ../tvbox-check/out/app-version.json
 ```
+
+兼容包同样走一遍，版本号和主版本保持一致；第 3 步要紧接在兼容包的构建之后跑（读的是同一个 output-metadata.json）：
+
+```bash
+gradle assembleRelease -Plegacy -PappVersionCode=3 -PappVersionName=1.0.2
+# 兼容包【必须保留 v1 签名】（不要加 --v1-signing-enabled false）：Android 5.0 / 6.0 只认 v1，
+# 只有 v2 签名的包会装不上（INSTALL_PARSE_FAILED_NO_CERTIFICATES）
+$ANDROID_HOME/build-tools/<版本>/apksigner sign --ks <你的.keystore> \
+  --out releases/TV-Player-1.0.2-legacy.apk app/build/outputs/apk/release/app-legacy-release-unsigned.apk
+python3 scripts/make-update-manifest.py releases/TV-Player-1.0.2-legacy.apk "<APK 的下载地址>" "更新说明" > ../tvbox-check/out/app-version-legacy.json
+```
+
+没有发布过 `app-version-legacy.json` 时，兼容包里点「检查更新」会提示检查失败（所有镜像都是 404，显示的是其中一个连不上的镜像的错误）。
 
 把 APK 和 `app-version.json` 提交到仓库，已安装的 App 就会在下次检查时提示更新。`releases/` 里请保留最近五个版本：公共代理（gh-proxy）会缓存版本说明一段时间，旧说明指向的 APK 如果被删掉，用户会下载失败。当前 `releases/` 里的包用的是本机 Android debug 密钥，只适合自己用；要给别人用，请换成自己保管的发布密钥。

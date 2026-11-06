@@ -2,6 +2,7 @@ package com.tv.player.ui
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -45,6 +46,7 @@ class PanActivity : BaseActivity() {
         setContentView(R.layout.activity_pan)
         if (isTv()) findViewById<View>(R.id.panContent).setPadding(dp(48), dp(27), dp(48), dp(27)) // overscan-safe area
         heading = findViewById(R.id.heading)
+        if (Build.VERSION.SDK_INT < 23) heading.isSingleLine = true // 中间省略配 maxLines=1 在 6.0 以下可能崩（lint EllipsizeMaxLines）
         status = findViewById(R.id.status)
         progress = findViewById(R.id.progress)
         list = findViewById(R.id.list)

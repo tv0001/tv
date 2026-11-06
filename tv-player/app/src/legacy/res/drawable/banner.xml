@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 兼容包专用：layer-list 子项的 width / height / gravity 要 Android 6.0 才认，这里改用四边留白把图标放在正中，
+     效果同 main 里的 banner.xml（320x180 的渐变底，中间 72dp 的图标） -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape>
+            <size android:width="320dp" android:height="180dp" />
+            <gradient
+                android:angle="45"
+                android:endColor="#7A4DFF"
+                android:startColor="#2F7BFF" />
+        </shape>
+    </item>
+    <item
+        android:bottom="54dp"
+        android:drawable="@drawable/ic_launcher_foreground"
+        android:left="124dp"
+        android:right="124dp"
+        android:top="54dp" />
+</layer-list>

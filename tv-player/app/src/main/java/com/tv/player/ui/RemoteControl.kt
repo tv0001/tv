@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.Dialog
 import android.media.AudioManager
 import android.view.KeyEvent
+import androidx.core.content.ContextCompat
 import java.lang.ref.WeakReference
 
 /**
@@ -58,7 +59,7 @@ object RemoteControl {
         if (name == "vol_up" || name == "vol_down") {
             val direction = if (name == "vol_up") AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER
             activity.runOnUiThread {
-                activity.getSystemService(AudioManager::class.java).adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, AudioManager.FLAG_SHOW_UI)
+                ContextCompat.getSystemService(activity, AudioManager::class.java)?.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, AudioManager.FLAG_SHOW_UI)
             }
             return "已发送"
         }

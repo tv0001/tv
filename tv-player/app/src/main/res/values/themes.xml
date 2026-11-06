@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <color name="bg">#0E1015</color>
     <color name="surface">#161923</color>
     <color name="surface_variant">#232837</color>
@@ -30,7 +30,7 @@
         <item name="android:windowBackground">@color/bg</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@color/surface</item>
-        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="23">false</item>
         <item name="bottomNavigationStyle">@style/Widget.TvPlayer.Nav</item>
         <item name="navigationRailStyle">@style/Widget.TvPlayer.NavRail</item>
         <item name="chipStyle">@style/Widget.TvPlayer.Chip</item>

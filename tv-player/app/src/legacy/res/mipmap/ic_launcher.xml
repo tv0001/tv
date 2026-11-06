@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 兼容包专用：Android 8.0 以下没有自适应图标（mipmap-anydpi-v26），用圆角方块底 + 同一个前景拼出桌面图标 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape>
+            <size android:width="108dp" android:height="108dp" />
+            <corners android:radius="24dp" />
+            <gradient
+                android:angle="45"
+                android:endColor="#7A4DFF"
+                android:startColor="#2F7BFF" />
+        </shape>
+    </item>
+    <!-- 自适应图标的前景只用中间 72dp，四周各收 -8dp 让图形大一点 -->
+    <item
+        android:bottom="-8dp"
+        android:drawable="@drawable/ic_launcher_foreground"
+        android:left="-8dp"
+        android:right="-8dp"
+        android:top="-8dp" />
+</layer-list>

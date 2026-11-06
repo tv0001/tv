@@ -36,6 +36,7 @@ object Http {
             .protocols(listOf(Protocol.HTTP_1_1))
             .connectionPool(ConnectionPool(16, 5, TimeUnit.MINUTES))
             .dispatcher(Dispatcher().apply { maxRequestsPerHost = 16 })
+            .let(LegacyTls::configure) // 兼容包在老系统上补根证书（见 LegacyTls），其余情况原样
             .build()
     }
 

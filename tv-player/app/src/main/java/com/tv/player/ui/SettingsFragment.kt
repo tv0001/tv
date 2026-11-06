@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.view.View
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.button.MaterialButton
@@ -390,7 +391,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             }
             .setPositiveButton("关闭", null)
         if (!context.isTv()) builder.setNeutralButton("复制") { _, _ ->
-            val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+            val clipboard = ContextCompat.getSystemService(context, android.content.ClipboardManager::class.java)
             clipboard?.setPrimaryClip(android.content.ClipData.newPlainText(title, read()))
         }
         RemoteControl.cover(builder.show())

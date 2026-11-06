@@ -11,6 +11,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.tv.player.R
 
 /**
@@ -25,7 +26,7 @@ class KeepAliveService : Service() {
 
         fun start(context: Context, title: String) {
             val intent = Intent(context, KeepAliveService::class.java).putExtra("title", title)
-            runCatching { context.startForegroundService(intent) }
+            runCatching { ContextCompat.startForegroundService(context, intent) }
         }
 
         fun stop(context: Context) {
@@ -41,8 +42,10 @@ class KeepAliveService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        val nm = getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(NotificationChannel(CHANNEL, "后台播放", NotificationManager.IMPORTANCE_LOW))
+        if (Build.VERSION.SDK_INT >= 26) {
+            getSystemService(NotificationManager::class.java)
+                .createNotificationChannel(NotificationChannel(CHANNEL, "后台播放", NotificationManager.IMPORTANCE_LOW))
+        }
         val open = PendingIntent.getActivity(
             this, 0,
             Intent(this, PlayActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),

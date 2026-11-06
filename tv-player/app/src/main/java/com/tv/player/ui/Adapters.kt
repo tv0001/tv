@@ -4,12 +4,14 @@ import android.app.UiModeManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.os.Build
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.TextView
+import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
@@ -28,6 +30,16 @@ import com.tv.player.data.LiveChannel
 import com.tv.player.data.VodGroup
 
 fun Context.dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+/**
+ * 布局里 android:foreground 画的焦点框：普通布局（不是 FrameLayout）要 Android 6.0 才画前景，兼容包在更老的系统上
+ * 把它画成背景（这些条目的根布局本来没有背景，内容四周留了边距，框仍然露得出来）。新系统上什么都不做。
+ */
+fun View.legacyFocusRing(): View = apply {
+    if (Build.VERSION.SDK_INT < 23 && this !is android.widget.FrameLayout && background == null) {
+        background = ContextCompat.getDrawable(context, R.drawable.bg_focus)
+    }
+}
 
 fun Context.isTv(): Boolean = when (Store.uiMode()) {
     "tv" -> true
@@ -81,7 +93,7 @@ class VodGroupAdapter(
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) =
-        Holder(LayoutInflater.from(parent.context).inflate(R.layout.item_vod, parent, false))
+        Holder(LayoutInflater.from(parent.context).inflate(R.layout.item_vod, parent, false).legacyFocusRing())
 
     override fun onBindViewHolder(h: Holder, position: Int) {
         val g = getItem(position)
@@ -123,7 +135,7 @@ class HotAdapter(
     private val widthDp: Int? = null,
 ) : ListAdapter<Hot.Item, VodGroupAdapter.Holder>(Diff) {
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VodGroupAdapter.Holder {
-        val view = LayoutInflater.from(parent.context).inflate(R.layout.item_vod, parent, false)
+        val view = LayoutInflater.from(parent.context).inflate(R.layout.item_vod, parent, false).legacyFocusRing()
         view.layoutParams = RecyclerView.LayoutParams(
             if (grid) ViewGroup.LayoutParams.MATCH_PARENT else parent.context.dp(widthDp ?: if (parent.context.isTv()) 128 else if (parent.context.isTablet()) 124 else 104),
             ViewGroup.LayoutParams.WRAP_CONTENT,

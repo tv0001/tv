@@ -97,7 +97,7 @@ object Ai {
                 // 《》 and stray marks around a title ("昼阳戏？") are not part of it.
                 val title = Search.clean((array.opt(i) as? String).orEmpty()).trim { !it.isLetterOrDigit() }
                 if (title.length !in 2..30 || title.any { it.isISOControl() } || "://" in title) continue
-                out.putIfAbsent(Search.normalize(title), title)
+                Search.normalize(title).let { if (it !in out) out[it] = title } // putIfAbsent 要 Android 7.0
             }
             return out.values.take(MAX_TITLES)
         }

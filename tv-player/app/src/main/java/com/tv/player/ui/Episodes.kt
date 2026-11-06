@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
+import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.work.Constraints
@@ -44,8 +45,10 @@ object Episodes {
     fun announce(context: Context) {
         val manager = NotificationManagerCompat.from(context)
         if (!manager.areNotificationsEnabled()) return
-        val system = context.getSystemService(NotificationManager::class.java)
-        system.createNotificationChannel(NotificationChannel(CHANNEL, "追剧更新", NotificationManager.IMPORTANCE_DEFAULT))
+        if (Build.VERSION.SDK_INT >= 26) {
+            context.getSystemService(NotificationManager::class.java)
+                .createNotificationChannel(NotificationChannel(CHANNEL, "追剧更新", NotificationManager.IMPORTANCE_DEFAULT))
+        }
         for (e in pending(Library.favorites(), Store::notifiedLatest)) {
             val open = PendingIntent.getActivity(
                 context, e.key.hashCode(), MainActivity.openIntent(context, e.key),

@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import com.tv.player.BuildConfig
@@ -37,13 +38,16 @@ object AppUpdate {
 
     class Check(val info: Info?, val error: String?)
 
-    fun manifestUrl() = Store.baseUrl().trim().trimEnd('/') + "/app-version.json"
+    /** 兼容包（最低 Android 5.0）读自己的版本说明：主版本最低 8.0，老设备升级过去装不上 */
+    private val MANIFEST = if (BuildConfig.LEGACY) "app-version-legacy.json" else "app-version.json"
+
+    fun manifestUrl() = Store.baseUrl().trim().trimEnd('/') + "/" + MANIFEST
 
     /**
      * The default source, and the same file through other GitHub mirrors and GitHub itself. Mirrors differ in speed and in
      * how long they keep an old copy, so they are asked at the same time.
      */
-    private const val GITHUB_PATH = "tv0001/tv/main/tvbox-check/out/app-version.json"
+    private val GITHUB_PATH = "tv0001/tv/main/tvbox-check/out/$MANIFEST"
     private val MIRRORS = mirrorsOf("https://gh-proxy.com/https://raw.githubusercontent.com/$GITHUB_PATH")
 
     /**
@@ -258,16 +262,29 @@ object AppUpdate {
             file
         }
 
-    fun canInstall(context: Context) = context.packageManager.canRequestPackageInstalls()
+    /** Android 8.0 以下（兼容包）没有按应用的安装授权，是系统设置里的「未知来源」总开关，安装界面自己会提示 */
+    fun canInstall(context: Context) = Build.VERSION.SDK_INT < 26 || context.packageManager.canRequestPackageInstalls()
 
     /** Opens the system installer; the caller must have checked [canInstall]. */
     fun install(activity: Activity, file: File) {
-        val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.files", file)
+        val uri = if (Build.VERSION.SDK_INT >= 24) FileProvider.getUriForFile(activity, "${activity.packageName}.files", file)
+        else Uri.fromFile(readableByInstaller(activity, file))
         activity.startActivity(
             Intent(Intent.ACTION_VIEW)
                 .setDataAndType(uri, "application/vnd.android.package-archive")
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
         )
+    }
+
+    /**
+     * Android 7.0 以下（兼容包）的系统安装器只认 file:// 地址，而且要它自己读得到这个文件：把下载好的文件和它所在的
+     * 目录（cache/updates、cache）设成其他人可读、可进入；应用数据目录本身系统已经给了其他人进入的权限。
+     */
+    private fun readableByInstaller(context: Context, file: File): File {
+        file.setReadable(true, false)
+        val appDir = context.cacheDir.parentFile
+        generateSequence(file.parentFile) { it.parentFile }.takeWhile { it != appDir }.forEach { it.setExecutable(true, false) }
+        return file
     }
 
     /** False when this device has no such settings page (some TV firmware); the caller then tells the user where to look. */

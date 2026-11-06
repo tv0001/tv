@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 兼容包专用：圆形版桌面图标，见 ic_launcher.xml -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="oval">
+            <size android:width="108dp" android:height="108dp" />
+            <gradient
+                android:angle="45"
+                android:endColor="#7A4DFF"
+                android:startColor="#2F7BFF" />
+        </shape>
+    </item>
+    <item
+        android:bottom="-8dp"
+        android:drawable="@drawable/ic_launcher_foreground"
+        android:left="-8dp"
+        android:right="-8dp"
+        android:top="-8dp" />
+</layer-list>

@@ -1,6 +1,7 @@
 package com.tv.player.ui
 
 import android.content.Context
+import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.view.inputmethod.EditorInfo
@@ -106,7 +107,9 @@ class ShortFragment : Fragment(R.layout.fragment_short) {
         status.setOnClickListener { if (query == null) { exhausted = false; loadMore() } }
         for (v in listOf(status, empty)) {
             v.isFocusable = true
-            v.foreground = ContextCompat.getDrawable(ctx, R.drawable.bg_focus_row)
+            // 普通 View 的前景要 Android 6.0；兼容包在老系统上把焦点框画成背景（这两个都是没有背景的文字）
+            if (Build.VERSION.SDK_INT >= 23) v.foreground = ContextCompat.getDrawable(ctx, R.drawable.bg_focus_row)
+            else v.background = ContextCompat.getDrawable(ctx, R.drawable.bg_focus_row)
         }
 
         val clear = view.findViewById<View>(R.id.shortClear)

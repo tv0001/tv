@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 兼容包专用：同 main 里的 bg_poster_placeholder.xml（深灰底中间一个淡淡的胶片图标），但 layer-list 子项的
+     width / height / gravity 要 Android 6.0 才认，这里用四边留白定位。底层给 120x180 的固有尺寸，整张图保持 2:3 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@drawable/bg_poster" />
+    <item
+        android:bottom="70dp"
+        android:left="40dp"
+        android:right="40dp"
+        android:top="70dp">
+        <vector
+            android:width="40dp"
+            android:height="40dp"
+            android:viewportWidth="24"
+            android:viewportHeight="24">
+            <path
+                android:fillColor="#40FFFFFF"
+                android:pathData="M18,3v2h-2V3H8v2H6V3H4v18h2v-2h2v2h8v-2h2v2h2V3h-2zM8,17H6v-2h2v2zm0,-4H6v-2h2v2zm0,-4H6V7h2v2zm10,8h-2v-2h2v2zm0,-4h-2v-2h2v2zm0,-4h-2V7h2v2z" />
+        </vector>
+    </item>
+</layer-list>

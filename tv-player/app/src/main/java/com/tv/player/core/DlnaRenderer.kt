@@ -3,6 +3,7 @@ package com.tv.player.core
 import android.content.Context
 import android.media.AudioManager
 import android.net.wifi.WifiManager
+import android.os.Build
 import android.util.Log
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.MediaType.Companion.toMediaType
@@ -212,7 +213,7 @@ object DlnaRenderer {
     }
 
     private fun notifyOne(sid: String, sub: Sub) {
-        val change = if (sub.service == "RenderingControl") DlnaProtocol.lastChangeRcs(volume(), audio().isStreamMute(AudioManager.STREAM_MUSIC))
+        val change = if (sub.service == "RenderingControl") DlnaProtocol.lastChangeRcs(volume(), muted())
         else target.snapshot().let { DlnaProtocol.lastChangeAvt(it.state, it.url, it.durationMs) }
         val seq = synchronized(sub) { sub.seq++ }
         val request = okhttp3.Request.Builder().url(sub.callback)
@@ -369,10 +370,10 @@ object DlnaRenderer {
             "GetDeviceCapabilities" -> listOf("PlayMedia" to "NETWORK", "RecMedia" to "NOT_IMPLEMENTED", "RecQualityModes" to "NOT_IMPLEMENTED")
             "GetVolume" -> listOf("CurrentVolume" to volume().toString())
             "SetVolume" -> emptyList<Pair<String, String>>().also { DlnaProtocol.arg(body, "DesiredVolume")?.toIntOrNull()?.let(::setVolume) }
-            "GetMute" -> listOf("CurrentMute" to if (audio().isStreamMute(AudioManager.STREAM_MUSIC)) "1" else "0")
+            "GetMute" -> listOf("CurrentMute" to if (muted()) "1" else "0")
             "SetMute" -> emptyList<Pair<String, String>>().also {
                 val mute = DlnaProtocol.arg(body, "DesiredMute").let { it == "1" || it.equals("true", true) }
-                audio().adjustStreamVolume(AudioManager.STREAM_MUSIC, if (mute) AudioManager.ADJUST_MUTE else AudioManager.ADJUST_UNMUTE, 0)
+                setMuted(mute)
             }
             "GetProtocolInfo" -> listOf("Source" to "", "Sink" to SINK)
             "GetCurrentConnectionIDs" -> listOf("ConnectionIDs" to "0")
@@ -386,6 +387,18 @@ object DlnaRenderer {
     }
 
     private fun audio() = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
+    // 静音的读写：ADJUST_MUTE / isStreamMute 要 Android 6.0，兼容包在更老的系统上用旧接口（旧接口不能查静音，按没静音答）
+    private fun muted() = Build.VERSION.SDK_INT >= 23 && audio().isStreamMute(AudioManager.STREAM_MUSIC)
+
+    private fun setMuted(mute: Boolean) {
+        if (Build.VERSION.SDK_INT >= 23) {
+            audio().adjustStreamVolume(AudioManager.STREAM_MUSIC, if (mute) AudioManager.ADJUST_MUTE else AudioManager.ADJUST_UNMUTE, 0)
+        } else {
+            @Suppress("DEPRECATION")
+            audio().setStreamMute(AudioManager.STREAM_MUSIC, mute)
+        }
+    }
 
     /** 音量按 0–100 报给手机。 */
     private fun volume(): Int {

@@ -2,16 +2,27 @@ plugins {
     id 'com.android.application'
 }
 
+// 兼容包：gradle assembleRelease -Plegacy 打出最低 Android 5.0 的包（app-legacy-release-unsigned.apk），给装不了
+// 主版本（最低 8.0）的老电视、老盒子用。不带这个参数时构建和以前完全一样。两种包共用 build 目录，打另一种时上一种的
+// 产物会被 Gradle 清掉，所以打完一种先签名拷走再打另一种。兼容包的自动更新读 app-version-legacy.json（见 AppUpdate），
+// 不会被升级成装不上的主版本
+// -Plegacy 或 -Plegacy=true 都算；-Plegacy=false 不算（只写 -Plegacy 时值是空字符串，Groovy 里空串是假，不能用 ?: 判断）
+def legacy = project.hasProperty('legacy') && project.property('legacy').toString() != 'false'
+if (legacy) {
+    base.archivesName = 'app-legacy'
+}
+
 android {
     namespace = 'com.tv.player'
     compileSdk = 35
 
     defaultConfig {
         applicationId = 'com.tv.player'
-        minSdk = 26
+        minSdk = legacy ? 21 : 26
         targetSdk = 35
         versionCode = (project.findProperty('appVersionCode') ?: '36').toString().toInteger()
         versionName = (project.findProperty('appVersionName') ?: '1.0.35').toString()
+        buildConfigField 'boolean', 'LEGACY', legacy.toString()
         // 唯一的原生库是 ffmpeg 音频解码：电视盒子和手机基本都是 ARM，只打这两种（少 3MB）。没有 ARM 转译的 x86 设备装不上
         ndk {
             abiFilters 'armeabi-v7a', 'arm64-v8a'
@@ -46,9 +57,23 @@ android {
         }
     }
 
+    // 兼容包专用的资源（老系统认不了的图标、layer-list 写法，以及根证书包）：放在构建类型的资源目录里，同名时盖过 main 里的
+    if (legacy) {
+        sourceSets {
+            debug.res.srcDirs += 'src/legacy/res'
+            release.res.srcDirs += 'src/legacy/res'
+            // 老系统缺的根证书（见 LegacyTls）
+            debug.resources.srcDirs += 'src/legacy/resources'
+            release.resources.srcDirs += 'src/legacy/resources'
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // 兼容包：smbj 等库用了 Java 8 的集合方法（Set.removeIf、Map.computeIfAbsent）和 java.time，Android 7.0 以下没有，
+        // 不补的话连 SMB 会抛 NoSuchMethodError。主版本不开（8.0 以上系统都有）
+        if (legacy) coreLibraryDesugaringEnabled = true
     }
 }
 
@@ -77,6 +102,8 @@ dependencies {
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0'
     implementation 'androidx.work:work-runtime-ktx:2.10.0'
     implementation 'androidx.tvprovider:tvprovider:1.0.0'
+
+    if (legacy) coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
 
     testImplementation 'junit:junit:4.13.2'
     // Android's own org.json is a stub in unit tests; the real one lets the JSON code run on the JVM.

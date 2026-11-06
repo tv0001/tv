@@ -1,6 +1,7 @@
 package com.tv.player.core
 
 import java.net.URL
+import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 
 /** The numbers and rules behind reading one source over several connections at once. */
@@ -79,8 +80,9 @@ object PrefetchPolicy {
  * downloads fast, is left alone (that one file, not its host).
  */
 class FallbackLatch {
-    private val hosts: MutableSet<String> = ConcurrentHashMap.newKeySet()
-    private val files: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    // ConcurrentHashMap.newKeySet 要 Android 7.0
+    private val hosts: MutableSet<String> = Collections.newSetFromMap(ConcurrentHashMap())
+    private val files: MutableSet<String> = Collections.newSetFromMap(ConcurrentHashMap())
 
     fun trip(url: String) {
         hostOf(url)?.let { hosts += it }

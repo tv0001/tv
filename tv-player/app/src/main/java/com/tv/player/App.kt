@@ -2,11 +2,14 @@ package com.tv.player
 
 import android.app.Activity
 import android.app.Application
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import androidx.core.content.ContextCompat
 import com.tv.player.core.CrashLog
 import com.tv.player.core.Http
+import com.tv.player.core.LegacyTls
 import com.tv.player.core.PlayLog
 import com.tv.player.core.Library
 import com.tv.player.core.Store
@@ -18,15 +21,22 @@ class App : Application() {
         super.onCreate()
         CrashLog.install(this) // 最先装上：后面初始化时崩了也要记下来
         PlayLog.install(this)
+        LegacyTls.install(this) // 兼容包在 Android 7.1 以下补根证书，其余情况什么都不做
         // 换了网络（换 Wi-Fi、断线重连）：旧网络查到的域名地址不一定还能用，池里旧网络上的空闲连接也别再拿来用
         // （请求发出去才发现连接已死，要等满读超时）
         runCatching {
-            getSystemService(android.net.ConnectivityManager::class.java)?.registerDefaultNetworkCallback(object : android.net.ConnectivityManager.NetworkCallback() {
+            val cm = ContextCompat.getSystemService(this, android.net.ConnectivityManager::class.java)
+            val callback = object : android.net.ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: android.net.Network) {
                     Http.dns.clear()
                     Http.client.connectionPool.evictAll()
                 }
-            })
+            }
+            if (Build.VERSION.SDK_INT >= 24) cm?.registerDefaultNetworkCallback(callback)
+            // Android 7.0 以下（兼容包）没有「默认网络」回调：改听所有能上网的网络，多清几次也无妨
+            else cm?.registerNetworkCallback(
+                android.net.NetworkRequest.Builder().addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET).build(), callback,
+            )
         }
         Store.init(this)
         Library.init(this)

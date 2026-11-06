@@ -53,6 +53,8 @@ import androidx.activity.addCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import androidx.core.widget.TextViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.animation.doOnCancel
 import androidx.core.animation.doOnEnd
@@ -479,7 +481,10 @@ class PlayActivity : BaseActivity() {
     private var resumeTip: View? = null
     private val hideResumeTip = Runnable { resumeTip?.let { fadeTo(it, false, gone = true) } }
     private val vfullShown get() = portraitFull && phoneStack && !landscape
-    private val canPortraitFull get() = phoneStack && !isLive && !landscape && !isInPictureInPictureMode
+    /** 是否在小窗里：isInPictureInPictureMode 要 Android 7.0，兼容包在更老的系统上没有小窗 */
+    private val pipMode get() = Build.VERSION.SDK_INT >= 24 && isInPictureInPictureMode
+
+    private val canPortraitFull get() = phoneStack && !isLive && !landscape && !pipMode
 
     /** The TV control bar over the picture (shown on demand, hides by itself). */
     private val overlay get() = isTv && (isLive || tvFull)
@@ -681,7 +686,7 @@ class PlayActivity : BaseActivity() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        if (landscape && !isInPictureInPictureMode) portraitFull = false // turned sideways: the landscape picture takes over
+        if (landscape && !pipMode) portraitFull = false // turned sideways: the landscape picture takes over
         if (locked) setLocked(false) // 新布局的锁键和控制栏从未锁状态开始
         abandonPull()
         detachViews()
@@ -691,7 +696,7 @@ class PlayActivity : BaseActivity() {
         updateFavorite()
         setInfo(infoText)
         applySystemBars()
-        if (isInPictureInPictureMode) applyPip(true)
+        if (pipMode) applyPip(true)
     }
 
     private fun bindViews() {
@@ -952,7 +957,7 @@ class PlayActivity : BaseActivity() {
             playerView.showController()
             showFullTip()
         } else {
-            findViewById<ConstraintLayout?>(R.id.root)?.setBackgroundColor(getColor(R.color.bg))
+            findViewById<ConstraintLayout?>(R.id.root)?.setBackgroundColor(ContextCompat.getColor(this, R.color.bg))
             applyPlayerBox()
         }
     }
@@ -1182,7 +1187,7 @@ class PlayActivity : BaseActivity() {
             root.fitsSystemWindows = true
             root.requestApplyInsets()
         }
-        root.setBackgroundColor(if (full) Color.BLACK else getColor(R.color.bg))
+        root.setBackgroundColor(if (full) Color.BLACK else ContextCompat.getColor(this, R.color.bg))
         if (!full) applyPlayerBox()
         playerView.setFullscreenButtonState(full)
         updateOverlayTitle()
@@ -1319,7 +1324,7 @@ class PlayActivity : BaseActivity() {
             showLockBriefly()
         } else {
             requestedOrientation = orientationBeforeLock
-            if (::playerView.isInitialized && !isInPictureInPictureMode) {
+            if (::playerView.isInitialized && !pipMode) {
                 playerView.useController = true
                 playerView.showController()
             }
@@ -1348,7 +1353,7 @@ class PlayActivity : BaseActivity() {
                 gravity = Gravity.CENTER
                 textSize = 17f
                 val current = abs(speed - now) < 0.01f
-                setTextColor(if (current) getColor(R.color.accent) else Color.WHITE)
+                setTextColor(if (current) ContextCompat.getColor(this@PlayActivity, R.color.accent) else Color.WHITE)
                 if (current) setTypeface(typeface, android.graphics.Typeface.BOLD)
                 isFocusable = true
                 setBackgroundResource(R.drawable.bg_focus_row)
@@ -1586,7 +1591,9 @@ class PlayActivity : BaseActivity() {
                 PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED,
                 PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED,
             )
-            val online = (getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).activeNetwork != null
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            @Suppress("DEPRECATION") // activeNetwork 要 Android 6.0，兼容包在更老的系统上用旧接口
+            val online = if (Build.VERSION.SDK_INT >= 23) cm.activeNetwork != null else cm.activeNetworkInfo != null
             if (!isLive && !started && sourceError && online) (resolvedUrl ?: current?.url)?.let { Store.markBadHost(it) }
             setInfo("这条线路播放失败，正在换下一条…")
             failOver()
@@ -2448,7 +2455,7 @@ class PlayActivity : BaseActivity() {
         val fav = Library.isFavorite(key)
         button.text = getString(if (fav) R.string.favorited else R.string.favorite)
         button.setIconResource(if (fav) R.drawable.ic_heart else R.drawable.ic_heart_outline)
-        button.iconTint = ColorStateList.valueOf(getColor(if (fav) R.color.heart else R.color.on_surface))
+        button.iconTint = ColorStateList.valueOf(ContextCompat.getColor(this, if (fav) R.color.heart else R.color.on_surface))
     }
 
     // ---- skip intro / outro, sleep timer, once-a-second housekeeping ---------------------------------------------
@@ -2724,7 +2731,7 @@ class PlayActivity : BaseActivity() {
         }
 
         // leaving the app (phones and tablets)
-        val canPip = !isTv && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+        val canPip = !isTv && Build.VERSION.SDK_INT >= 26 && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
         if (isTv) view.findViewById<View>(R.id.leaveBox).visibility = View.GONE else {
             val actions = if (canPip) listOf("pause", "audio", "pip") else listOf("pause", "audio")
             val labels = if (canPip) listOf("暂停", "后台听声音", "小窗播放") else listOf("暂停", "后台听声音")
@@ -2751,7 +2758,7 @@ class PlayActivity : BaseActivity() {
             addView(BottomSheetDragHandleView(this@PlayActivity))
             addView(TextView(this@PlayActivity).apply {
                 text = "播放设置"
-                setTextAppearance(R.style.TextAppearance_TvPlayer_Headline)
+                TextViewCompat.setTextAppearance(this, R.style.TextAppearance_TvPlayer_Headline)
                 setPadding(dp(24), 0, dp(24), dp(8))
             })
             addView(view)
@@ -2770,7 +2777,7 @@ class PlayActivity : BaseActivity() {
         if (d.content.isEmpty()) return
         val text = TextView(this).apply {
             text = d.content
-            setTextAppearance(R.style.TextAppearance_TvPlayer_Body)
+            TextViewCompat.setTextAppearance(this, R.style.TextAppearance_TvPlayer_Body)
             setLineSpacing(0f, 1.3f)
             setPadding(dp(24), 0, dp(24), dp(16))
         }
@@ -2799,7 +2806,7 @@ class PlayActivity : BaseActivity() {
             }
             addView(TextView(this@PlayActivity).apply {
                 text = title
-                setTextAppearance(R.style.TextAppearance_TvPlayer_Headline)
+                TextViewCompat.setTextAppearance(this, R.style.TextAppearance_TvPlayer_Headline)
                 setPadding(dp(24), 0, dp(24), dp(12))
             })
             addView(content, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -2813,7 +2820,9 @@ class PlayActivity : BaseActivity() {
                 systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
                 hide(WindowInsetsCompat.Type.systemBars())
             }
-            attributes = attributes.also { it.layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS }
+            if (Build.VERSION.SDK_INT >= 28) { // 刘海屏设置要 Android 9.0
+                attributes = attributes.also { it.layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS }
+            }
         }
         dialog.setOnShowListener {
             // Start on the first option so the remote is immediately useful.
@@ -2835,7 +2844,8 @@ class PlayActivity : BaseActivity() {
     // ---- picture in picture / background sound -------------------------------------------------------------------
 
     private fun enterPip(): Boolean {
-        if (isTv || !packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return false
+        // 手机小窗要 Android 8.0（兼容包在更老的系统上没有小窗）
+        if (isTv || Build.VERSION.SDK_INT < 26 || !packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return false
         pipRequested = true
         return try {
             enterPictureInPictureMode(PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build()).also { if (!it) pipRequested = false }
@@ -3319,7 +3329,7 @@ class PlayActivity : BaseActivity() {
             })
             if (!isTv) addView(TextView(this@PlayActivity).apply {
                 text = "从头播放"
-                setTextColor(getColor(R.color.accent))
+                setTextColor(ContextCompat.getColor(this@PlayActivity, R.color.accent))
                 textSize = 13f
                 gravity = Gravity.CENTER
                 setPadding(dp(10), 0, dp(10), 0)
@@ -3343,7 +3353,7 @@ class PlayActivity : BaseActivity() {
     private fun showResumeTip(fromMs: Long) {
         val tip = resumeTip ?: return
         // 锁着屏点不得；控制栏亮着时会压在进度条上（续到哪进度条上也看得到）
-        if (isLive || isInPictureInPictureMode || locked || controllerShown) return
+        if (isLive || pipMode || locked || controllerShown) return
         tip.findViewById<TextView>(R.id.resumeText).text = if (isTv) "已从上次的 ${formatTime(fromMs)} 继续播放" else "已从 ${formatTime(fromMs)} 继续播放"
         fadeTo(tip, true)
         handler.removeCallbacks(hideResumeTip)
@@ -3372,7 +3382,7 @@ class PlayActivity : BaseActivity() {
             left = ((end - p.currentPosition) / p.playbackParameters.speed.coerceAtLeast(0.1f)).toLong()
         }
         val show = p != null && next != null && !isLive && !replayMode && started && !nextCancelled && !sleepAfterEp && !locked &&
-            !isInPictureInPictureMode && (overlay || !isTv) && !vfullShown && !(overlay && panel?.visibility == View.VISIBLE) &&
+            !pipMode && (overlay || !isTv) && !vfullShown && !(overlay && panel?.visibility == View.VISIBLE) &&
             p.duration >= NEXT_CARD_MIN_MS &&
             p.playbackState != Player.STATE_ENDED && seekPending < 0 && left in 1..NEXT_CARD_MS
         if (show) {
@@ -3442,7 +3452,8 @@ class PlayActivity : BaseActivity() {
 
     /** 电视上把刷新率切到片源帧率的整数倍（设置里开了才做）。离开播放页后系统自己恢复原来的刷新率。 */
     private fun matchFrameRate(fps: Float) {
-        if (!isTv || !Store.matchFrameRate() || isFinishing) return
+        // 读写显示模式要 Android 6.0（兼容包在更老的系统上不切刷新率）
+        if (!isTv || Build.VERSION.SDK_INT < 23 || !Store.matchFrameRate() || isFinishing) return
         val display = (if (Build.VERSION.SDK_INT >= 30) display else @Suppress("DEPRECATION") windowManager.defaultDisplay) ?: return
         val now = display.mode
         val modes = display.supportedModes.map { FrameRateMatch.Mode(it.modeId, it.physicalWidth, it.physicalHeight, it.refreshRate) }
@@ -3466,7 +3477,7 @@ class PlayActivity : BaseActivity() {
     private fun applySubtitleStyle() {
         val view = playerView.subtitleView ?: return
         val size = Store.subtitleSize()
-        val captioning = getSystemService(android.view.accessibility.CaptioningManager::class.java)
+        val captioning = getSystemService(Context.CAPTIONING_SERVICE) as? android.view.accessibility.CaptioningManager
         val user = if (captioning?.isEnabled == true) captioning.fontScale else 1f
         view.setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * SUB_SCALES[size] * user)
         // 不是「标准」时，字幕文件自带的字号也不用，按这里选的来
@@ -3776,12 +3787,12 @@ class PlayActivity : BaseActivity() {
         super.onPause()
         handler.removeCallbacks(saver)
         saveProgress()
-        val inPip = pipRequested || isInPictureInPictureMode
+        val inPip = pipRequested || pipMode
         val audio = !isTv && !inPip && !isFinishing && !isChangingConfigurations && Store.leaveAction() == "audio" && player?.isPlaying == true
         if (audio) {
             // A dialog in front (e.g. the notification permission prompt) keeps playing without the notification;
             // only really leaving (Home, recents, screen off) needs the foreground service.
-            if (leaving || !getSystemService(PowerManager::class.java).isInteractive) {
+            if (leaving || !(getSystemService(Context.POWER_SERVICE) as PowerManager).isInteractive) {
                 KeepAliveService.onStop = {
                     runOnUiThread {
                         player?.pause()
@@ -3798,7 +3809,7 @@ class PlayActivity : BaseActivity() {
 
     override fun onStop() {
         super.onStop()
-        if (isInPictureInPictureMode && getSystemService(PowerManager::class.java).isInteractive) {
+        if (pipMode && (getSystemService(Context.POWER_SERVICE) as PowerManager).isInteractive) {
             // The floating window was closed (a screen turning off also stops the activity; that is not a close).
             player?.pause()
             finishAndRemoveTask()

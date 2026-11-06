@@ -90,7 +90,7 @@ object QuarkWeb {
     }
 
     /** Hosts of the download addresses this login was given: the only ones its cookies are sent to. */
-    private val linkHosts: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    private val linkHosts: MutableSet<String> = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap()) // newKeySet 要 Android 7.0
 
     /** Request headers a player must send to a drive address (cookies and the PC client's user agent); null for other hosts. */
     fun headersFor(host: String): Map<String, String>? =

@@ -306,8 +306,10 @@ object UpdateUi {
     }
 
     private fun build(app: Context, title: String, text: String, ongoing: Boolean, progress: Int): Notification {
-        app.getSystemService(NotificationManager::class.java)
-            .createNotificationChannel(NotificationChannel(CHANNEL, "应用更新", NotificationManager.IMPORTANCE_LOW))
+        if (Build.VERSION.SDK_INT >= 26) {
+            app.getSystemService(NotificationManager::class.java)
+                .createNotificationChannel(NotificationChannel(CHANNEL, "应用更新", NotificationManager.IMPORTANCE_LOW))
+        }
         val open = PendingIntent.getActivity(
             app, 0, Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,

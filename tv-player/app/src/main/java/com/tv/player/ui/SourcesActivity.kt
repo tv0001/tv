@@ -1,5 +1,6 @@
 package com.tv.player.ui
 
+import android.os.Build
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -8,6 +9,7 @@ import android.widget.ImageButton
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -230,14 +232,15 @@ class SourcesActivity : BaseActivity() {
 
         class Holder(v: View) : RecyclerView.ViewHolder(v) {
             val title: TextView = v.findViewById(R.id.title)
-            val sub: TextView = v.findViewById(R.id.sub)
+            // 中间省略配 maxLines=1 在 6.0 以下的系统上可能崩（lint EllipsizeMaxLines），兼容包在老系统上改成 singleLine
+            val sub: TextView = v.findViewById<TextView>(R.id.sub).apply { if (Build.VERSION.SDK_INT < 23) isSingleLine = true }
             val status: TextView = v.findViewById(R.id.status)
             val toggle: MaterialSwitch = v.findViewById(R.id.toggle)
             val delete: ImageButton = v.findViewById(R.id.delete)
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) =
-            Holder(LayoutInflater.from(parent.context).inflate(R.layout.item_source, parent, false))
+            Holder(LayoutInflater.from(parent.context).inflate(R.layout.item_source, parent, false).legacyFocusRing())
 
         override fun onBindViewHolder(h: Holder, position: Int) {
             val row = getItem(position)
@@ -245,7 +248,7 @@ class SourcesActivity : BaseActivity() {
             h.sub.text = row.sub
             h.status.visibility = if (row.status == null) View.GONE else View.VISIBLE
             h.status.text = row.status
-            h.status.setTextColor(h.itemView.context.getColor(if (row.statusOk) R.color.ok else R.color.bad))
+            h.status.setTextColor(ContextCompat.getColor(h.itemView.context, if (row.statusOk) R.color.ok else R.color.bad))
             h.toggle.setOnCheckedChangeListener(null)
             h.toggle.visibility = if (row.enabled == null) View.GONE else View.VISIBLE
             h.toggle.isChecked = row.enabled ?: false
