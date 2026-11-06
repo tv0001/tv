@@ -8,6 +8,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
+import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
@@ -70,6 +71,13 @@ class VodGroupAdapter(
         val remarks: TextView = v.findViewById(R.id.remarks)
         val title: TextView = v.findViewById(R.id.title)
         val subtitle: TextView = v.findViewById(R.id.subtitle)
+        val watched: ProgressBar = v.findViewById(R.id.watched)
+
+        /** 继续观看的进度条：[progress] 在 0..1 之间才显示（太靠前的不画，免得只有一个点） */
+        fun showProgress(progress: Float) {
+            watched.visibility = if (progress >= 0.01f) View.VISIBLE else View.GONE
+            if (progress >= 0.01f) watched.progress = (progress * 1000).toInt()
+        }
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) =
@@ -79,6 +87,8 @@ class VodGroupAdapter(
         val g = getItem(position)
         h.poster.load(g.pic.takeIf { it.isNotEmpty() }) {
             crossfade(true)
+            fallback(R.drawable.bg_poster_placeholder)
+            error(R.drawable.bg_poster_placeholder)
             transformations(RoundedCornersTransformation(h.itemView.context.dp(8).toFloat()))
         }
         val many = g.items.size > 1
@@ -88,6 +98,7 @@ class VodGroupAdapter(
         h.badge.setBackgroundResource(if (g.badge.isNotEmpty()) R.drawable.bg_badge else R.drawable.bg_badge_muted)
         h.badge.setTextColor(if (g.badge.isNotEmpty()) 0xFF00224D.toInt() else android.graphics.Color.WHITE)
         h.remarks.text = g.remarks
+        h.showProgress(g.progress)
         h.title.text = g.title
         h.subtitle.text = g.items.map { it.sourceName }.distinct().joinToString(" · ")
         h.itemView.zoomOnFocus()
@@ -126,10 +137,13 @@ class HotAdapter(
             addHeader("User-Agent", Http.UA)
             if ("doubanio.com" in item.pic) addHeader("Referer", Hot.IMAGE_REFERER)
             crossfade(true)
+            fallback(R.drawable.bg_poster_placeholder)
+            error(R.drawable.bg_poster_placeholder)
             transformations(RoundedCornersTransformation(h.itemView.context.dp(8).toFloat()))
         }
         h.badge.visibility = View.GONE
         h.remarks.text = if (item.rating > 0) "★ %.1f".format(java.util.Locale.ROOT, item.rating) else item.remarks
+        h.showProgress(item.progress)
         h.title.text = item.title
         val year = item.sub.substringBefore(" / ") // older caches kept the whole "2026 / 中国大陆 / …" line
         h.subtitle.text = year
@@ -141,7 +155,7 @@ class HotAdapter(
 
     private object Diff : DiffUtil.ItemCallback<Hot.Item>() {
         override fun areItemsTheSame(a: Hot.Item, b: Hot.Item) = a.title == b.title
-        override fun areContentsTheSame(a: Hot.Item, b: Hot.Item) = a.title == b.title && a.pic == b.pic && a.rating == b.rating
+        override fun areContentsTheSame(a: Hot.Item, b: Hot.Item) = a.title == b.title && a.pic == b.pic && a.rating == b.rating && a.progress == b.progress && a.sub == b.sub && a.remarks == b.remarks
     }
 }
 

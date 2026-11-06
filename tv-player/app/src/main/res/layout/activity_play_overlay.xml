@@ -52,6 +52,18 @@
 
         </LinearLayout>
 
+        <!-- 播到哪、缓冲到哪（电视视频 App 的控制栏都有这一条）；直播不显示 -->
+        <ProgressBar
+            android:id="@+id/tvProgress"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="4dp"
+            android:layout_marginTop="12dp"
+            android:layout_marginBottom="4dp"
+            android:max="1000"
+            android:progressDrawable="@drawable/progress_tv"
+            android:visibility="gone" />
+
         <TextView
             android:id="@+id/info"
             android:layout_width="match_parent"

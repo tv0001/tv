@@ -38,6 +38,13 @@ import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** 电视首页第一个标签页的名字 */
+private const val CONTINUE = "继续观看"
+
+/** 热播榜加载失败时状态行的开头：只有这时状态行能点（重试） */
+private const val HOT_RETRY = "热播榜没加载出来"
+private const val HOT_LOADING = "正在加载热播榜…"
+
 class SearchFragment : Fragment(R.layout.fragment_search) {
     private var job: Job? = null
     private lateinit var adapter: VodGroupAdapter
@@ -56,6 +63,11 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
     private lateinit var hotRowsList: LinearLayout
     private lateinit var hotAdapter: HotAdapter
     private var hotSections: List<Hot.Section> = emptyList()
+    /** 顶部标签实际排的分页：电视上在热播榜前面多一页「继续观看」（[watching] 是它对应的观看记录） */
+    private var tabSections: List<Hot.Section> = emptyList()
+    private var watching: List<Library.Entry> = emptyList()
+    /** 电视：搜索不是在搜索框里发起的（点了热播、历史、手机推送），结果一出来就把焦点放到第一个结果上 */
+    private var focusResults = false
     private var searching = false
     private lateinit var filterBox: View
     private lateinit var filterChips: ChipGroup
@@ -99,7 +111,7 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         hotGrid.adapter = hotAdapter
         hotTabs.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
             override fun onTabSelected(tab: TabLayout.Tab) {
-                hotSections.getOrNull(tab.position)?.let {
+                tabSections.getOrNull(tab.position)?.let {
                     hotAdapter.submitList(it.items) { hotGrid.scrollToPosition(0) }
                 }
             }
@@ -126,7 +138,11 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         if (requireContext().isTv()) hotGrid.setPadding(requireContext().dp(12), requireContext().dp(16), requireContext().dp(12), requireContext().dp(16))
 
         // An empty status line must not take up a row of height.
-        status.doAfterTextChanged { status.visibility = if (it.isNullOrEmpty()) View.GONE else View.VISIBLE }
+        status.doAfterTextChanged {
+            status.visibility = if (it.isNullOrEmpty()) View.GONE else View.VISIBLE
+            // 只有「热播榜没加载出来，点这里重试」能点；别的状态是说明文字，遥控器不该停在上面
+            status.isFocusable = it?.startsWith(HOT_RETRY) == true || it?.startsWith(HOT_LOADING) == true
+        }
 
         view.findViewById<View>(R.id.phoneInput).apply {
             visibility = if (requireContext().isTv()) View.VISIBLE else View.GONE
@@ -160,13 +176,17 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         view.findViewById<View>(R.id.searchIcon).setOnClickListener { search(query.text.toString()) }
         status.setOnClickListener {
             if (!searching && hotSections.isEmpty()) {
-                status.text = "正在加载热播榜…"
+                status.text = HOT_LOADING
                 loadHot(force = true)
             }
         }
-        if (requireContext().isTv()) view.viewTreeObserver.addOnGlobalFocusChangeListener { _, _ ->
+        status.isFocusable = false // setOnClickListener 让它可点，电视上就会抢焦点
+        if (requireContext().isTv()) view.viewTreeObserver.addOnGlobalFocusChangeListener { old, now ->
             syncHistory()
             syncKeyboard()
+            followTabFocus(old, now)
+            // 等结果时用户自己把焦点挪进了搜索这一片或结果里：不再替他挪
+            if (focusResults && now != null && listOf(query.parent as View, keyboard, suggestBox, results, filterBox).any { isInside(now, it) }) focusResults = false
         }
         reset()
         pendingSearch?.let {
@@ -323,6 +343,7 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         updateSubtitle()
         // Back from the player: what was just watched belongs in the compact row (phones, tabs layout).
         if (hotSections.isNotEmpty() && !searching && Store.hotLayout() != "rows") fillExtra()
+        refreshContinueTab()
     }
 
     private fun updateSubtitle() {
@@ -331,6 +352,7 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
     }
 
     private fun reset() {
+        focusResults = false
         job?.cancel()
         adapter.submitList(emptyList())
         progress.visibility = View.GONE
@@ -363,7 +385,7 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
                 renderHot(fresh)
                 if (!searching) status.text = ""
             } else if (hotSections.isEmpty() && !searching) {
-                status.text = "热播榜没加载出来（可能没连上豆瓣），点这里重试，或直接搜索"
+                status.text = "$HOT_RETRY（可能没连上豆瓣），点这里重试，或直接搜索"
             }
         }
     }
@@ -390,13 +412,16 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         }
         fillExtra()
         // Keep the tab the user was on (matched by title) when the list refreshes.
-        val keep = hotSections.getOrNull(hotTabs.selectedTabPosition)?.title
+        val keep = tabSections.getOrNull(hotTabs.selectedTabPosition)?.title
+        val tabsHadFocus = hotTabs.hasFocus() // 重建标签会把焦点丢回导航，建好后放回选中的标签
         hotSections = sections
+        tabSections = listOfNotNull(continueSection()) + sections
         hotTabs.removeAllTabs()
-        sections.forEach { hotTabs.addTab(hotTabs.newTab().setText(it.title.removePrefix("热播").removePrefix("最近更新 · ")), false) }
-        val at = sections.indexOfFirst { it.title == keep }.coerceAtLeast(0)
+        tabSections.forEach { hotTabs.addTab(hotTabs.newTab().setText(it.title.removePrefix("热播").removePrefix("最近更新 · ")), false) }
+        val at = tabSections.indexOfFirst { it.title == keep }.coerceAtLeast(0)
         hotTabs.getTabAt(at)?.select()
-        hotAdapter.submitList(sections[at].items)
+        if (tabsHadFocus) hotTabs.getTabAt(at)?.view?.requestFocus()
+        hotAdapter.submitList(tabSections[at].items)
         if (!searching) syncIdle()
     }
 
@@ -429,7 +454,7 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         val groups = updated.map { it.toFavoriteGroup() } + watching.map { it.toGroup(withProgress = true) }
         if (groups.isEmpty()) return
         val shown = groups.take(10)
-        val items = shown.map { Hot.Item(it.title, it.pic, 0.0, it.remarks.substringBefore(" · ")) }
+        val items = shown.map { Hot.Item(it.title, it.pic, 0.0, it.remarks.substringBefore(" · "), progress = it.progress) }
         val row = layoutInflater.inflate(R.layout.view_hot_section, hotExtra, false)
         row.findViewById<TextView>(R.id.sectionTitle).text = if (updated.isEmpty()) "继续观看" else "继续观看 · 追剧更新"
         val list = row.findViewById<RecyclerView>(R.id.sectionList)
@@ -446,7 +471,7 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
     private fun addContinueRow() {
         val watching = Library.history(12)
         if (watching.isEmpty()) return
-        val items = watching.map { Hot.Item(it.title, it.pic, 0.0, if (it.epName.isNotEmpty()) "看到 ${it.epName}" else "") }
+        val items = watching.map { Hot.Item(it.title, it.pic, 0.0, if (it.epName.isNotEmpty()) "看到 ${it.epName}" else "", progress = it.progress) }
         addRow("继续观看", items) { picked ->
             watching.firstOrNull { it.title == picked.title }?.let { PlayActivity.startVod(requireContext(), it.toGroup(withProgress = true)) }
         }
@@ -463,7 +488,66 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
     }
 
     /** "第二季" style suffixes are dropped so every season shows up in the results. */
+    /**
+     * 电视首页（标签布局）的第一页「继续观看」：手机和平板在标签上面有一行小海报，电视上那一行放不下（见 [fillExtra]），
+     * 就做成一页，和腾讯、爱奇艺的电视版一样开机先看到上次在看的。没有观看记录就没有这一页。
+     */
+    private fun continueSection(): Hot.Section? {
+        if (!requireContext().isTv()) return null
+        watching = Library.history(30)
+        if (watching.isEmpty()) return null
+        return Hot.Section(CONTINUE, watching.map { Hot.Item(it.title, it.pic, 0.0, if (it.epName.isNotEmpty()) "看到 ${it.epName}" else "", progress = it.progress) })
+    }
+
+    /** 从播放页回来：「继续观看」这一页按最新的记录更新，焦点和别的分页不动 */
+    private fun refreshContinueTab() {
+        if (!requireContext().isTv() || Store.hotLayout() == "rows" || hotSections.isEmpty() || searching) return
+        val had = tabSections.firstOrNull()?.title == CONTINUE
+        val section = continueSection()
+        if ((section != null) != had) {
+            renderHot(hotSections)
+            return
+        }
+        if (section == null) return
+        tabSections = listOf(section) + tabSections.drop(1)
+        if (hotTabs.selectedTabPosition == 0) hotAdapter.submitList(section.items)
+    }
+
+    /**
+     * 电视：在标签之间左右移，焦点到哪一页就切到哪一页（电视视频 App 都这样），不用再按确认。
+     * 从网格或搜索框进标签这一排时，焦点先回到当前选中的那个标签，不按几何位置落到别的标签上把页面换掉。
+     */
+    private fun followTabFocus(old: View?, now: View?) {
+        if (now == null || !isInside(now, hotTabs)) return
+        val selected = hotTabs.getTabAt(hotTabs.selectedTabPosition)
+        if (old == null || !isInside(old, hotTabs)) {
+            if (selected != null && now !== selected.view) selected.view.requestFocus()
+            return
+        }
+        for (i in 0 until hotTabs.tabCount) {
+            val tab = hotTabs.getTabAt(i) ?: continue
+            if (tab.view === now && !tab.isSelected) tab.select()
+        }
+    }
+
+    private fun isInside(v: View, parent: View): Boolean {
+        var p: View? = v
+        while (p != null) {
+            if (p === parent) return true
+            p = p.parent as? View
+        }
+        return false
+    }
+
     private fun openHot(item: Hot.Item) {
+        val page = tabSections.getOrNull(hotTabs.selectedTabPosition)
+        if (page?.title == CONTINUE && hotGrid.visibility == View.VISIBLE) {
+            // 按位置找对应的记录：同名的片子可能有好几条记录（短剧页、网盘各自一条）
+            watching.getOrNull(page.items.indexOfFirst { it === item })?.let {
+                PlayActivity.startVod(requireContext(), it.toGroup(withProgress = true))
+                return
+            }
+        }
         val keyword = Cms.cleanTitle(item.title).replace(Regex("\\s*第[一二三四五六七八九十0-9]+季.*$"), "").ifBlank { item.title }
         query.setText(keyword)
         search(keyword)
@@ -546,8 +630,23 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
     /** The merged results through the current sort / filter, plus the row of filter chips. */
     private fun showResults() {
         val shown = filter.apply(raw)
-        adapter.submitList(shown)
+        adapter.submitList(shown) { if (shown.isNotEmpty()) focusFirstResult() }
         buildFilters(shown.size)
+    }
+
+    private fun focusFirstResult() {
+        if (!focusResults) return
+        results.post {
+            if (!focusResults || view == null || isHidden) return@post
+            // 只在焦点没有着落（掉到左侧导航或没有焦点）时挪
+            val now = requireActivity().currentFocus
+            if (now != null && isInside(now, requireView())) {
+                focusResults = false
+                return@post
+            }
+            val first = results.layoutManager?.findViewByPosition(0) ?: return@post
+            if (first.requestFocus()) focusResults = false
+        }
     }
 
     private fun buildFilters(shown: Int) {
@@ -614,6 +713,10 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
             .hideSoftInputFromWindow(query.windowToken, 0)
         Store.addHistory(keyword)
+        // 在搜索框、键盘、联想里发起的搜索，焦点留在那（可能还要改词）；点热播或历史发起的，那一片马上要藏起来，
+        // 焦点会掉到左边导航上，结果出来时挪到第一个结果
+        val ctx = requireContext()
+        focusResults = ctx.isTv() && !(query.hasFocus() || keyboard.hasFocus() || suggestBox.hasFocus())
         historyBox.visibility = View.GONE
         suggestJob?.cancel()
         keepFocusInBox()

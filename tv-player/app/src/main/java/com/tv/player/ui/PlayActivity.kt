@@ -45,6 +45,7 @@ import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
+import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -167,6 +168,9 @@ class PlayActivity : BaseActivity() {
         private const val DROP_LOG_MS = 60_000L // 掉帧最多这么久记一条
         private const val MAX_BUFFER_MS = 50_000
         private const val SAVE_MS = 10_000L
+        private const val RESUME_TIP_MIN_MS = 10_000L // 续播位置不到这么多就不提示「已从 xx:xx 继续播放」
+        private const val RESUME_TIP_MS = 6_000L // 续播提示停留这么久
+        private const val LOCK_SHOW_MS = 2_500L // 锁屏后点一下，锁键露出这么久
         private const val TAP_SEEK_STEP_MS = 10_000L // 双击两侧一下跳这么多
         private const val TAP_SEEK_WINDOW_MS = 700L // 双击过后这么久之内同一侧单点也接着跳
         private const val TAP_SEEK_EDGE = 0.3f // 画面左右各这么宽算「两侧」，中间双击还是暂停
@@ -437,6 +441,10 @@ class PlayActivity : BaseActivity() {
 
     /** The phone stack (small picture over the lists); wide tablets have a side panel instead, and TV its own pages. */
     private val phoneStack get() = !isTv && !(isTablet() && resources.configuration.screenWidthDp >= 720)
+    /** 手机横屏全屏（layout-land 的 activity_play）：面板从右边滑出 */
+    private val phoneLand get() = phoneStack && landscape
+    /** 横屏的手机和平板：倍速、选集、播放设置从右边滑出（底部面板在横屏里又矮又挡画面） */
+    private val drawers get() = !isTv && landscape
 
     /**
      * 手机上的竖屏视频（短剧）：画面铺满整个屏幕，和 B 站的竖屏视频一样。往下拖小窗下面那一栏进入，右下角的箭头
@@ -447,6 +455,18 @@ class PlayActivity : BaseActivity() {
     private var controllerShown = false
     private var portraitVideo = false
     private var vfullTipShown = false
+
+    /** 手机横屏全屏锁屏（腾讯视频、B 站都有）：锁住后手势、控制栏都不响应，点画面只露出锁键；转回竖屏自动解锁 */
+    private var locked = false
+    private var orientationBeforeLock = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+    private val hideLock = Runnable { if (locked) findViewById<View?>(R.id.lock)?.let { fadeTo(it, false) } }
+    /** 横屏控制栏右下角的「倍速」「选集」（插在 media3 自己的按钮前面） */
+    private var speedBarBtn: TextView? = null
+    private var episodeBarBtn: TextView? = null
+    /** 从观看记录接着播的位置：第一次起播时左下角提示「已从 xx:xx 继续播放 · 从头播放」，提示过就清零 */
+    private var resumeTipFrom = 0L
+    private var resumeTip: View? = null
+    private val hideResumeTip = Runnable { resumeTip?.let { fadeTo(it, false, gone = true) } }
     private val vfullShown get() = portraitFull && phoneStack && !landscape
     private val canPortraitFull get() = phoneStack && !isLive && !landscape && !isInPictureInPictureMode
 
@@ -612,7 +632,11 @@ class PlayActivity : BaseActivity() {
         applySystemBars()
 
         onBackPressedDispatcher.addCallback(this) {
-            if (isTv && nextCard?.visibility == View.VISIBLE) {
+            if (locked) {
+                // 锁着的时候返回也不退出（侧滑返回最容易误触），先露出锁键
+                showLockBriefly()
+                flashHud("屏幕已锁定，点左边的锁解锁", 1_500, R.drawable.ic_lock)
+            } else if (isTv && nextCard?.visibility == View.VISIBLE) {
                 cancelNext()
             } else if (vfullShown) {
                 setPortraitFull(false)
@@ -647,6 +671,7 @@ class PlayActivity : BaseActivity() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         if (landscape && !isInPictureInPictureMode) portraitFull = false // turned sideways: the landscape picture takes over
+        if (locked) setLocked(false) // 新布局的锁键和控制栏从未锁状态开始
         abandonPull()
         detachViews()
         setContentView(playLayout())
@@ -665,6 +690,9 @@ class PlayActivity : BaseActivity() {
         playerView.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener {
             controllerShown = it == View.VISIBLE
             syncThinProgress()
+            syncLandOverlay()
+            // 控制栏出来时续播提示会压在进度条上：先收起（点提示本身的「从头播放」不受影响，它在控制栏上面）
+            if (controllerShown) resumeTip?.takeIf { t -> t.visibility == View.VISIBLE }?.let { t -> handler.removeCallbacks(hideResumeTip); fadeTo(t, false, gone = true) }
         })
         playerView.player = controlPlayer ?: player
         // The controller's own gear opens the same panel as the app's: one place for speed, picture, subtitles and the rest.
@@ -752,6 +780,8 @@ class PlayActivity : BaseActivity() {
         setupGestures()
         applySubtitleStyle()
         setupNextCard()
+        setupResumeTip()
+        setupLandControls()
         if (overlay) {
             updatePlayPause()
             setPanelVisible(true)
@@ -1153,6 +1183,7 @@ class PlayActivity : BaseActivity() {
         val episodes = details[curSrc]?.lines?.getOrNull(curLine)?.episodes?.size ?: 0
         findViewById<TextView?>(R.id.vTitle)?.text = if (episodes > 1) "$title · ${epName()}" else title
         findViewById<View?>(R.id.vEpisodes)?.visibility = if (episodes > 1) View.VISIBLE else View.GONE
+        episodeBarBtn?.visibility = if (episodes > 1) View.VISIBLE else View.GONE
     }
 
     /** The hairline at the bottom of the tall full screen shows how far along the episode is while the controls are away. */
@@ -1161,6 +1192,163 @@ class PlayActivity : BaseActivity() {
         bar.visibility = if (controllerShown) View.INVISIBLE else View.VISIBLE
         val p = player ?: return
         if (p.duration > 0) bar.progress = (p.currentPosition * 1000 / p.duration).toInt().coerceIn(0, 1000)
+    }
+
+    // ---- 手机横屏全屏：顶栏、锁屏、倍速 / 选集（参照腾讯视频、B 站） --------------------------------------------------
+
+    /** 横屏全屏的浮层只在手机横屏布局里有：顶栏的刘海边距、锁键、控制栏右下角的「倍速」「选集」 */
+    private fun setupLandControls() {
+        speedBarBtn = null
+        episodeBarBtn = null
+        val layer = findViewById<View?>(R.id.landOverlay) ?: return
+        ViewCompat.setOnApplyWindowInsetsListener(layer) { v, insets ->
+            val i = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            v.setPadding(i.left, i.top, i.right, i.bottom)
+            insets
+        }
+        ViewCompat.requestApplyInsets(layer)
+        findViewById<View?>(R.id.lock)?.setOnClickListener { setLocked(!locked) }
+        // 底栏的齿轮和顶栏的设置是同一个面板：顶栏有设置时只留顶栏那个（平板的设置在右边面板里，齿轮留着给全屏用）
+        if (layer.findViewById<View?>(R.id.playSettings) != null) {
+            playerView.findViewById<View?>(androidx.media3.ui.R.id.exo_settings)?.visibility = View.GONE
+        }
+        val bar = playerView.findViewById<ViewGroup?>(androidx.media3.ui.R.id.exo_basic_controls)
+        if (bar != null && !isLive) {
+            val height = playerView.findViewById<View?>(androidx.media3.ui.R.id.exo_fullscreen)?.layoutParams?.height ?: dp(48)
+            fun barButton(text: String, onClick: () -> Unit) = TextView(this).apply {
+                this.text = text
+                gravity = Gravity.CENTER
+                setTextColor(Color.WHITE)
+                textSize = 15f
+                setPadding(dp(12), 0, dp(12), 0)
+                background = android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), null, null)
+                setOnClickListener { onClick() }
+            }
+            speedBarBtn = barButton("倍速") { showSpeedPanel() }
+            episodeBarBtn = barButton("选集") { showEpisodes() }
+            bar.addView(speedBarBtn, 0, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, height))
+            bar.addView(episodeBarBtn, 1, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, height))
+            updateSpeedLabel()
+            updateOverlayTitle()
+        }
+        syncLandOverlay(animate = false)
+    }
+
+    /** 底栏「倍速」显示现在的倍速，1× 时就写「倍速」 */
+    private fun updateSpeedLabel() {
+        val speed = Store.playSpeed()
+        speedBarBtn?.text = if (abs(speed - 1f) < 0.01f) "倍速" else speedText(speed)
+    }
+
+    private fun speedText(speed: Float) = "${speed}×".replace(".0×", "×")
+
+    /** 顶栏和锁键跟着控制栏一起淡入淡出；锁着的时候顶栏不出来，锁键由 [showLockBriefly] 管 */
+    private fun syncLandOverlay(animate: Boolean = true) {
+        val top = findViewById<View?>(R.id.landTop) ?: return
+        val show = controllerShown && !locked
+        if (show) updateClock()
+        fadeTo(top, show, animate = animate)
+        val lock = findViewById<View?>(R.id.lock) ?: return
+        if (!locked) fadeTo(lock, show, animate = animate)
+    }
+
+    /** 顶栏右边的时间和电量（全屏时系统状态栏是藏起来的） */
+    private fun updateClock() {
+        val clock = findViewById<TextView?>(R.id.landClock) ?: return
+        val now = java.util.Calendar.getInstance()
+        val time = "%02d:%02d".format(now.get(java.util.Calendar.HOUR_OF_DAY), now.get(java.util.Calendar.MINUTE))
+        val battery = (getSystemService(Context.BATTERY_SERVICE) as? android.os.BatteryManager)
+            ?.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)?.takeIf { it in 0..100 }
+        clock.text = if (battery != null) "$time   电量 $battery%" else time
+    }
+
+    /** 透明度渐变显示 / 隐藏；藏起来以后设成不可见，不挡下面的点击 */
+    private fun fadeTo(v: View, show: Boolean, animate: Boolean = true, gone: Boolean = false) {
+        v.animate().cancel()
+        val hidden = if (gone) View.GONE else View.INVISIBLE
+        if (!animate || animationsOff()) {
+            v.alpha = 1f
+            v.visibility = if (show) View.VISIBLE else hidden
+            return
+        }
+        if (show) {
+            if (v.visibility != View.VISIBLE) {
+                v.alpha = 0f
+                v.visibility = View.VISIBLE
+            }
+            v.animate().alpha(1f).setDuration(160).start()
+        } else if (v.visibility == View.VISIBLE) {
+            v.animate().alpha(0f).setDuration(160).withEndAction { v.visibility = hidden; v.alpha = 1f }.start()
+        }
+    }
+
+    private fun animationsOff() = Settings.Global.getFloat(contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
+
+    /** 锁屏：控制栏收起、手势停用、屏幕方向固定；解锁恢复原样 */
+    private fun setLocked(on: Boolean) {
+        if (locked == on) return
+        locked = on
+        handler.removeCallbacks(hideLock)
+        findViewById<ImageButton?>(R.id.lock)?.apply {
+            setImageResource(if (on) R.drawable.ic_lock else R.drawable.ic_lock_open)
+            contentDescription = if (on) "解锁屏幕" else "锁定屏幕"
+        }
+        if (on) {
+            orientationBeforeLock = requestedOrientation
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LOCKED
+            playerView.hideController()
+            playerView.useController = false
+            // 挂在画面上的提示自己能接点击，锁屏拦不住：先收起（下一集照样按时自动播放）
+            handler.removeCallbacks(hideResumeTip)
+            resumeTip?.visibility = View.GONE
+            nextCard?.visibility = View.GONE
+            flashHud("屏幕已锁定", 1_000, R.drawable.ic_lock)
+            showLockBriefly()
+        } else {
+            requestedOrientation = orientationBeforeLock
+            if (::playerView.isInitialized && !isInPictureInPictureMode) {
+                playerView.useController = true
+                playerView.showController()
+            }
+        }
+        syncLandOverlay()
+    }
+
+    /** 锁着的时候点画面：锁键露出几秒再淡出 */
+    private fun showLockBriefly() {
+        val lock = findViewById<View?>(R.id.lock) ?: return
+        fadeTo(lock, true)
+        handler.removeCallbacks(hideLock)
+        handler.postDelayed(hideLock, LOCK_SHOW_MS)
+    }
+
+    /** 倍速：右侧一列大字（腾讯视频横屏的样子），当前的用强调色 */
+    private fun showSpeedPanel() {
+        val speeds = listOf(3f, 2f, 1.5f, 1.25f, 1f, 0.75f)
+        val now = Store.playSpeed()
+        var dialog: android.app.Dialog? = null
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            for (speed in speeds) addView(TextView(this@PlayActivity).apply {
+                text = speedText(speed)
+                gravity = Gravity.CENTER
+                textSize = 17f
+                val current = abs(speed - now) < 0.01f
+                setTextColor(if (current) getColor(R.color.accent) else Color.WHITE)
+                if (current) setTypeface(typeface, android.graphics.Typeface.BOLD)
+                isFocusable = true
+                setBackgroundResource(R.drawable.bg_focus_row)
+                setOnClickListener {
+                    player?.setPlaybackSpeed(speed)
+                    Store.setPlaySpeed(speed)
+                    updateSpeedLabel()
+                    dialog?.dismiss()
+                    flashHud("${speedText(speed)} 倍速", 900)
+                }
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)))
+        }
+        dialog = showSidePanel("倍速", android.widget.ScrollView(this).apply { isFillViewport = true; addView(list) }, width = 240)
     }
 
     /** Whether the previous (-1) or next (1) episode exists, for the controller's own buttons. */
@@ -1229,7 +1417,15 @@ class PlayActivity : BaseActivity() {
 
     private fun updateProgress() {
         val p = player ?: return
-        progressText?.text = if (!canSeek() || p.duration <= 0) "" else "${formatTime(p.currentPosition)} / ${formatTime(p.duration)}"
+        val known = canSeek() && p.duration > 0
+        progressText?.text = if (!known) "" else "${formatTime(p.currentPosition)} / ${formatTime(p.duration)}"
+        findViewById<ProgressBar?>(R.id.tvProgress)?.apply {
+            visibility = if (known) View.VISIBLE else View.GONE
+            if (known) {
+                progress = (p.currentPosition * 1000 / p.duration).toInt().coerceIn(0, 1000)
+                secondaryProgress = (p.bufferedPosition * 1000 / p.duration).toInt().coerceIn(0, 1000)
+            }
+        }
     }
 
     private fun applySystemBars() {
@@ -1295,6 +1491,10 @@ class PlayActivity : BaseActivity() {
                     val restart = !isLive && wanted > 0 && player?.let { p -> p.duration > 0 && wanted >= p.duration - 1_000 } == true
                     if (restart) player?.seekTo(0)
                     if (isLive) refreshEpg() else skipIntro(resumed && !restart)
+                    if (resumeTipFrom > 0) {
+                        if (resumed && !restart) showResumeTip(wanted)
+                        resumeTipFrom = 0
+                    }
                     setInfo(playingText())
                 }
                 Player.STATE_ENDED -> if (replayMode) setInfo("回看已播完，可以换一段，或点「回到直播」") else if (!isLive) {
@@ -1349,7 +1549,10 @@ class PlayActivity : BaseActivity() {
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) = updateKeepScreen()
 
         override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
-            if (!isLive && !speedBoost) Store.setPlaySpeed(playbackParameters.speed)
+            if (!isLive && !speedBoost) {
+                Store.setPlaySpeed(playbackParameters.speed)
+                updateSpeedLabel()
+            }
         }
 
         override fun onPlayerError(error: PlaybackException) {
@@ -1776,6 +1979,7 @@ class PlayActivity : BaseActivity() {
         curLine = q.line
         curEp = q.ep
         needWarm = true // a stale stream still gets the slow-start rescue
+        if (saved.posMs >= RESUME_TIP_MIN_MS) resumeTipFrom = saved.posMs
         playCurrent(saved.posMs, Cand(q.url, "${items[src].sourceName} · ${q.lineName}", src, q.line), q.stream)
         lifecycleScope.launch {
             val d = detailOf(src)
@@ -1891,6 +2095,7 @@ class PlayActivity : BaseActivity() {
         updateFavorite()
         Library.markSeen(key, Tracker.countOf(first))
         needWarm = true
+        if (start >= RESUME_TIP_MIN_MS) resumeTipFrom = start
         playCurrent(start)
         prefetchDetails()
     }
@@ -2041,14 +2246,38 @@ class PlayActivity : BaseActivity() {
     /** The tall full screen has no episode list under the picture: every episode in a panel over it, and the lines one tap away. */
     private fun showEpisodes() {
         val episodes = details[curSrc]?.lines?.getOrNull(curLine)?.episodes ?: return
-        var panel: androidx.appcompat.app.AlertDialog? = null
+        var close: () -> Unit = {}
         val chips = ChipAdapter(fill = true) { index ->
-            panel?.dismiss()
+            close()
             if (index != curEp) selectEpisode(index)
         }
-        chips.submit(episodes.map { Regex("^第0*(\\d+)[集期话]$").find(it.name)?.groupValues?.get(1) ?: it.name }, curEp)
+        val names = episodes.map { Regex("^第0*(\\d+)[集期话]$").find(it.name)?.groupValues?.get(1) ?: it.name }
+        chips.submit(names, curEp)
+        if (drawers) {
+            // 横屏：右侧抽屉，画面留在左边（腾讯视频、B 站横屏的选集）
+            val list = RecyclerView(this).apply {
+                layoutManager = GridLayoutManager(this@PlayActivity, episodeSpan(names, 400 - 32 - 8, 5))
+                adapter = chips
+                clipToPadding = false
+                setPadding(dp(16), dp(4), dp(16), dp(8))
+                layoutManager?.scrollToPosition(curEp)
+            }
+            val box = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+                addView((layoutInflater.inflate(R.layout.button_tonal, this, false) as MaterialButton).apply {
+                    text = "换线路"
+                    setOnClickListener { close(); showAllLines() }
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    setMargins(dp(20), dp(8), dp(20), 0)
+                })
+            }
+            val side = showSidePanel("选集（共 ${episodes.size} 集）", box, width = 400)
+            close = { side.dismiss() }
+            return
+        }
         val grid = BoundedRecyclerView(this, panelListHeight()).apply {
-            layoutManager = GridLayoutManager(this@PlayActivity, 5)
+            layoutManager = GridLayoutManager(this@PlayActivity, episodeSpan(names, resources.configuration.screenWidthDp - 48 - 32, 5))
             adapter = chips
             clipToPadding = false
             setPadding(dp(16), dp(8), dp(16), dp(8))
@@ -2060,7 +2289,7 @@ class PlayActivity : BaseActivity() {
             .setNeutralButton("线路") { _, _ -> showAllLines() }
             .setNegativeButton("关闭", null)
             .show()
-        panel = dialog
+        close = { dialog.dismiss() }
         RemoteControl.cover(dialog)
     }
 
@@ -2126,9 +2355,33 @@ class PlayActivity : BaseActivity() {
         // TV: "第03集" reads as just "3" on a tile, like TV video apps; other names stay as they are.
         val label = { n: String -> if (isTv) Regex("^第0*(\\d+)[集期话]$").find(n)?.groupValues?.get(1) ?: n else n }
         epAdapter.submit(shown.map { label(it.name) }, curEp - epOffset)
+        applyEpisodeSpan(shown.map { label(it.name) })
         epLabel?.text = "选集（共 ${episodes.size} 集）"
         updateOverlayTitle()
         episodesView?.scrollToPosition((curEp - epOffset).coerceAtLeast(0))
+    }
+
+    /**
+     * 选集网格几列：「第12集」这种短名排满 [max] 列；综艺的「20261022-01」这类长名少排几列，免得每格都只剩「202610…」。
+     * 按 14sp 估宽：汉字约 14dp，数字和字母约 8dp，再加格子的内边距和间距。
+     */
+    private fun episodeSpan(labels: List<String>, widthDp: Int, max: Int): Int {
+        val widest = labels.maxOfOrNull { l -> l.sumOf { c -> if (c.code > 0x2E80) 14.0 else 8.0 } } ?: 0.0
+        val cell = widest + 28 + 8 // item_chip：左右内边距各 14dp，外边距各 4dp
+        return (widthDp / cell).toInt().coerceIn(1, max)
+    }
+
+    /** 选集列表的列数；列表还没量出宽度（刚换布局）时等它排好再算，免得拿整屏宽度估多了 */
+    private fun applyEpisodeSpan(labels: List<String>) {
+        val list = episodesView ?: return
+        val lm = list.layoutManager as? GridLayoutManager ?: return
+        val max = if (panel != null) 3 else 4
+        if (list.width == 0) {
+            list.post { if (list.width > 0 && list.layoutManager === lm) applyEpisodeSpan(labels) }
+            return
+        }
+        val width = ((list.width - list.paddingLeft - list.paddingRight) / resources.displayMetrics.density).toInt()
+        lm.spanCount = episodeSpan(labels, width, max)
     }
 
     private fun setInfo(text: String) {
@@ -2141,7 +2394,7 @@ class PlayActivity : BaseActivity() {
         val p = player ?: return
         val pos = p.currentPosition
         val nearEnd = p.duration > 0 && pos > p.duration - 15_000
-        val entry = Library.Entry(key, title, pic, items, curEp, epName(), if (nearEnd) 0 else pos)
+        val entry = Library.Entry(key, title, pic, items, curEp, epName(), if (nearEnd) 0 else pos, durMs = p.duration.coerceAtLeast(0))
         Library.saveProgress(entry)
         // The launcher's provider is a cross-process call: keep it off the main thread.
         val duration = p.duration
@@ -2198,6 +2451,7 @@ class PlayActivity : BaseActivity() {
             if (overlay && panel?.visibility == View.VISIBLE) updateProgress()
             updateNextCard()
             if (vfullShown) syncThinProgress()
+            if (tick % 10 == 0 && findViewById<View?>(R.id.landTop)?.visibility == View.VISIBLE) updateClock()
             // The programme guide moves on every few minutes.
             if (isLive && started && tick % 30 == 0) setInfo(playingText())
             handler.postDelayed(this, 1_000)
@@ -2274,6 +2528,7 @@ class PlayActivity : BaseActivity() {
         started = false
         resolution = ""
         findViewById<TextView?>(R.id.title)?.text = title
+        updateOverlayTitle()
         applyRememberedLine()
         needWarm = true
         refreshLists()
@@ -2461,7 +2716,7 @@ class PlayActivity : BaseActivity() {
             }
         }
 
-        if (isTv) {
+        if (isTv || drawers) {
             showSidePanel("播放设置", view)
             return
         }
@@ -2499,7 +2754,8 @@ class PlayActivity : BaseActivity() {
     }
 
     /** TV: a full-height panel on the right; the picture stays visible on the left. Back closes it. */
-    private fun showSidePanel(title: String, content: View, scrollOnly: Boolean = false) {
+    /** 手机横屏全屏也用它：底部面板在横屏里又矮又挡画面，腾讯视频、B 站横屏的倍速、选集、设置都是右侧抽屉 */
+    private fun showSidePanel(title: String, content: View, scrollOnly: Boolean = false, width: Int = 420): android.app.Dialog {
         val dialog = android.app.Dialog(this, R.style.Theme_TvPlayer_SidePanel)
         // With buttons inside, the scroll container must not take focus (it would draw a highlight); with plain text
         // ([scrollOnly]) it has to, or the remote could not scroll it.
@@ -2509,7 +2765,14 @@ class PlayActivity : BaseActivity() {
         }
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(27), dp(24), dp(27)) // TV overscan safe area on the top, right and bottom
+            // TV overscan safe area on the top, right and bottom; a phone only needs to keep clear of the camera cut-out
+            val (v, end) = if (isTv) dp(27) to dp(24) else dp(16) to dp(8)
+            setPadding(0, v, end, v)
+            if (!isTv) ViewCompat.setOnApplyWindowInsetsListener(this) { view, insets ->
+                val cut = insets.getInsets(WindowInsetsCompat.Type.displayCutout())
+                view.setPadding(0, v, end + cut.right, v)
+                insets
+            }
             addView(TextView(this@PlayActivity).apply {
                 text = title
                 setTextAppearance(R.style.TextAppearance_TvPlayer_Headline)
@@ -2520,7 +2783,7 @@ class PlayActivity : BaseActivity() {
         dialog.setContentView(root)
         dialog.window?.apply {
             setGravity(Gravity.END)
-            setLayout(dp(420), ViewGroup.LayoutParams.MATCH_PARENT)
+            setLayout(dp(width), ViewGroup.LayoutParams.MATCH_PARENT)
             // Full height like the picture behind it: no strip left where the hidden status bar would be.
             WindowCompat.getInsetsController(this, decorView).apply {
                 systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
@@ -2532,7 +2795,9 @@ class PlayActivity : BaseActivity() {
             // Start on the first option so the remote is immediately useful.
             content.focusSearch(View.FOCUS_DOWN)?.requestFocus() ?: content.requestFocus()
         }
+        dialog.setCanceledOnTouchOutside(true) // 手机上点左边的画面就收起
         dialog.show()
+        return dialog
     }
 
     /** Only when it was started: stopService is a call into the system, not free on every resume. */
@@ -2573,7 +2838,8 @@ class PlayActivity : BaseActivity() {
     private fun applyPip(inPip: Boolean) {
         if (inPip) nextCard?.visibility = View.GONE
         val gone = if (inPip) View.GONE else View.VISIBLE
-        for (id in listOf(R.id.topbar, R.id.content, R.id.back, R.id.title, R.id.cast, R.id.playSettings)) findViewById<View?>(id)?.visibility = gone
+        for (id in listOf(R.id.topbar, R.id.content, R.id.back, R.id.title, R.id.cast, R.id.playSettings, R.id.landOverlay)) findViewById<View?>(id)?.visibility = gone
+        if (inPip) resumeTip?.visibility = View.GONE
         // The tall full screen's episode button is shown only when there is more than one episode: refreshLists decides.
         findViewById<View?>(R.id.vOverlay)?.visibility = if (!inPip && vfullShown) View.VISIBLE else View.GONE
         if (!inPip) refreshLists()
@@ -3007,6 +3273,68 @@ class PlayActivity : BaseActivity() {
         updateNextCard()
     }
 
+    /**
+     * 续播提示（腾讯视频、YouTube 的做法）：从观看记录接着播时，画面左下角一个胶囊「已从 12:34 继续播放 · 从头播放」，
+     * 几秒后淡出。电视上按钮拿不到焦点，只写文字。
+     */
+    private fun setupResumeTip() {
+        val tip = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            visibility = View.GONE
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xCC161923.toInt())
+                cornerRadius = dp(18).toFloat()
+            }
+            setPadding(dp(14), 0, dp(4), 0)
+            addView(TextView(this@PlayActivity).apply {
+                id = R.id.resumeText
+                setTextColor(Color.WHITE)
+                textSize = 13f
+            })
+            if (!isTv) addView(TextView(this@PlayActivity).apply {
+                text = "从头播放"
+                setTextColor(getColor(R.color.accent))
+                textSize = 13f
+                gravity = Gravity.CENTER
+                setPadding(dp(10), 0, dp(10), 0)
+                background = android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), null, null)
+                setOnClickListener { restartFromTop() }
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)))
+            minimumHeight = dp(36)
+        }
+        // 左下角，在底栏和进度条上面；电视留出安全区
+        val (side, bottom) = when {
+            overlay -> dp(48) to dp(48) // 电视全屏：过扫描安全区
+            isTv -> dp(12) to dp(12) // 电视详情页的小窗
+            else -> dp(12) to dp(if (landscape) 76 else 40)
+        }
+        playerView.addView(tip, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.START).apply {
+            setMargins(side, 0, side, bottom)
+        })
+        resumeTip = tip
+    }
+
+    private fun showResumeTip(fromMs: Long) {
+        val tip = resumeTip ?: return
+        // 锁着屏点不得；控制栏亮着时会压在进度条上（续到哪进度条上也看得到）
+        if (isLive || isInPictureInPictureMode || locked || controllerShown) return
+        tip.findViewById<TextView>(R.id.resumeText).text = if (isTv) "已从上次的 ${formatTime(fromMs)} 继续播放" else "已从 ${formatTime(fromMs)} 继续播放"
+        fadeTo(tip, true)
+        handler.removeCallbacks(hideResumeTip)
+        handler.postDelayed(hideResumeTip, RESUME_TIP_MS)
+    }
+
+    /** 续播提示里的「从头播放」：回到开头（设了跳过片头的照样跳过） */
+    private fun restartFromTop() {
+        handler.removeCallbacks(hideResumeTip)
+        resumeTip?.let { fadeTo(it, false, gone = true) }
+        player?.seekTo(0)
+        introDone = false
+        skipIntro(false)
+        flashHud("从头播放")
+    }
+
     /** 离这一集结束（设了跳过片尾就是片尾开始处）不到 10 秒时显示倒计时，其余时候藏起来。每秒由 ticker 调一次。 */
     private fun updateNextCard() {
         val card = nextCard ?: return
@@ -3018,7 +3346,7 @@ class PlayActivity : BaseActivity() {
             val end = if (outro > 0 && p.duration > (outro + 60) * 1000L) p.duration - outro * 1000L else p.duration
             left = ((end - p.currentPosition) / p.playbackParameters.speed.coerceAtLeast(0.1f)).toLong()
         }
-        val show = p != null && next != null && !isLive && !replayMode && started && !nextCancelled && !sleepAfterEp &&
+        val show = p != null && next != null && !isLive && !replayMode && started && !nextCancelled && !sleepAfterEp && !locked &&
             !isInPictureInPictureMode && (overlay || !isTv) && !vfullShown && !(overlay && panel?.visibility == View.VISIBLE) &&
             p.duration >= NEXT_CARD_MIN_MS &&
             p.playbackState != Player.STATE_ENDED && seekPending < 0 && left in 1..NEXT_CARD_MS
@@ -3340,6 +3668,11 @@ class PlayActivity : BaseActivity() {
         )
 
         view.setOnTouchListener { v, event ->
+            // 锁屏：手势全部不响应，点一下只露出锁键
+            if (locked) {
+                if (event.actionMasked == MotionEvent.ACTION_UP) showLockBriefly()
+                return@setOnTouchListener true
+            }
             if (event.actionMasked == MotionEvent.ACTION_DOWN) downRawY = event.rawY
             // 手指的速度用屏幕坐标算：画面在手指下面跟着动，用它自己的坐标会算错
             if (event.actionMasked == MotionEvent.ACTION_DOWN) velocity.clear()

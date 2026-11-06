@@ -28,18 +28,35 @@
         app:layout_constraintEnd_toEndOf="@id/poster"
         app:layout_constraintStart_toStartOf="@id/poster" />
 
+    <!-- 继续观看：这一集看到哪了（腾讯视频、YouTube 海报底部那条线），没有进度时不显示 -->
+    <ProgressBar
+        android:id="@+id/watched"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="0dp"
+        android:layout_height="3dp"
+        android:layout_marginStart="8dp"
+        android:layout_marginEnd="8dp"
+        android:layout_marginBottom="7dp"
+        android:max="1000"
+        android:progressDrawable="@drawable/progress_poster"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="@id/poster"
+        app:layout_constraintEnd_toEndOf="@id/poster"
+        app:layout_constraintStart_toStartOf="@id/poster" />
+
     <TextView
         android:id="@+id/remarks"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_marginStart="8dp"
         android:layout_marginEnd="8dp"
-        android:layout_marginBottom="6dp"
+        android:layout_marginBottom="4dp"
         android:ellipsize="end"
         android:maxLines="1"
         android:textColor="@android:color/white"
         android:textSize="11sp"
-        app:layout_constraintBottom_toBottomOf="@id/poster"
+        app:layout_goneMarginBottom="6dp"
+        app:layout_constraintBottom_toTopOf="@id/watched"
         app:layout_constraintEnd_toEndOf="@id/poster"
         app:layout_constraintStart_toStartOf="@id/poster" />
 

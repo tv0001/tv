@@ -26,7 +26,15 @@ object Hot {
     )
 
     /** [rating] and [sub] (year) come from Douban; [remarks] (e.g. "更新至第06集") from a source. */
-    class Item(val title: String, val pic: String, val rating: Double, val sub: String, val remarks: String = "")
+    class Item(
+        val title: String,
+        val pic: String,
+        val rating: Double,
+        val sub: String,
+        val remarks: String = "",
+        /** 继续观看行：看到哪了（0..1），海报底部画进度条；-1 不画 */
+        val progress: Float = -1f,
+    )
 
     class Section(val title: String, val items: List<Item>)
 

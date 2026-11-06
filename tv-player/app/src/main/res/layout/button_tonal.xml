@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 代码里要一个次要按钮时从这里取，样式和其它页面一致 -->
+<com.google.android.material.button.MaterialButton xmlns:android="http://schemas.android.com/apk/res/android"
+    style="@style/Widget.TvPlayer.TonalButton"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content" />

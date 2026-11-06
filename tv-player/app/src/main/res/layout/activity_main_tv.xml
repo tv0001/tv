@@ -16,6 +16,7 @@
         android:layout_height="match_parent"
         android:background="@drawable/bg_nav_panel"
         app:headerLayout="@layout/nav_header"
+        app:itemBackground="@drawable/bg_nav_item"
         app:labelVisibilityMode="labeled"
         app:menu="@menu/menu_nav"
         app:menuGravity="center" />

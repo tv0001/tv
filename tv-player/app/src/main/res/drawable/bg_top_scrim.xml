@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 横屏全屏顶栏下面的渐变：上深下透，标题和按钮在亮画面上也看得清 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <gradient
+        android:angle="270"
+        android:endColor="#00000000"
+        android:startColor="#B3000000" />
+</shape>

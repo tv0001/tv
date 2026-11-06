@@ -13,35 +13,90 @@
         app:show_buffering="when_playing"
         app:use_controller="true" />
 
-    <ImageButton
-        android:id="@+id/back"
-        android:layout_width="48dp"
-        android:layout_height="48dp"
-        android:layout_gravity="top|start"
-        android:layout_margin="12dp"
-        android:background="@drawable/bg_overlay_button"
-        android:contentDescription="@string/back"
-        android:src="@drawable/ic_back" />
+    <!--
+      手机横屏全屏的浮层（参照腾讯视频 / B 站）：顶栏是返回、片名·集数、时间电量、投屏、设置，左边中间是锁屏键。
+      跟着控制栏一起淡入淡出（PlayActivity.syncLandOverlay）；本身不可点，点空白处照常落到画面上。
+      内边距由代码按刘海和系统栏设置。
+    -->
+    <FrameLayout
+        android:id="@+id/landOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
 
-    <ImageButton
-        android:id="@+id/cast"
-        android:layout_width="48dp"
-        android:layout_height="48dp"
-        android:layout_gravity="top|end"
-        android:layout_margin="12dp"
-        android:background="@drawable/bg_overlay_button"
-        android:contentDescription="@string/cast"
-        android:src="@drawable/ic_cast" />
+        <LinearLayout
+            android:id="@+id/landTop"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top"
+            android:background="@drawable/bg_top_scrim"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="8dp"
+            android:paddingTop="8dp"
+            android:paddingEnd="8dp"
+            android:paddingBottom="28dp">
 
-    <ImageButton
-        android:id="@+id/playSettings"
-        android:layout_width="48dp"
-        android:layout_height="48dp"
-        android:layout_gravity="top|end"
-        android:layout_marginTop="12dp"
-        android:layout_marginEnd="68dp"
-        android:background="@drawable/bg_overlay_button"
-        android:contentDescription="播放设置"
-        android:src="@drawable/ic_settings" />
+            <ImageButton
+                android:id="@+id/back"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/back"
+                android:src="@drawable/ic_back" />
+
+            <TextView
+                android:id="@+id/vTitle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:shadowColor="#99000000"
+                android:shadowRadius="6"
+                android:textColor="@android:color/white"
+                android:textSize="17sp" />
+
+            <TextView
+                android:id="@+id/landClock"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:layout_marginEnd="8dp"
+                android:fontFeatureSettings="tnum"
+                android:shadowColor="#99000000"
+                android:shadowRadius="6"
+                android:textColor="#DDFFFFFF"
+                android:textSize="13sp" />
+
+            <ImageButton
+                android:id="@+id/cast"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/cast"
+                android:src="@drawable/ic_cast" />
+
+            <ImageButton
+                android:id="@+id/playSettings"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="播放设置"
+                android:src="@drawable/ic_settings" />
+
+        </LinearLayout>
+
+        <ImageButton
+            android:id="@+id/lock"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="start|center_vertical"
+            android:layout_marginStart="20dp"
+            android:background="@drawable/bg_overlay_button"
+            android:contentDescription="锁定屏幕"
+            android:src="@drawable/ic_lock_open" />
+
+    </FrameLayout>
 
 </FrameLayout>

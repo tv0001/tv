@@ -40,7 +40,16 @@ data class Catchup(val template: String, val days: Int)
 data class LiveChannel(val name: String, val group: String, val urls: List<String>, val catchup: Catchup? = null)
 
 /** Same title from one or more sources. */
-data class VodGroup(val key: String, val title: String, val pic: String, val remarks: String, val items: List<VodItem>, val badge: String = "")
+data class VodGroup(
+    val key: String,
+    val title: String,
+    val pic: String,
+    val remarks: String,
+    val items: List<VodItem>,
+    val badge: String = "",
+    /** 继续观看：这一集看到哪了（0..1），海报底部画一条进度；-1 不画 */
+    val progress: Float = -1f,
+)
 
 fun List<VodItem>.toJsonString(): String = JSONArray().also { arr ->
     for (i in this) arr.put(

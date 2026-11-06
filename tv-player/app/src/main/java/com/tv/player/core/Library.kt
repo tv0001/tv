@@ -26,12 +26,17 @@ object Library {
         /** Favorites only: episodes the user has seen listed, and the most the sources currently list (0 = unknown). */
         val seen: Int = 0,
         val latest: Int = 0,
+        /** History only: how long the episode at [ep] is (0 = unknown), for the progress bar on the poster. */
+        val durMs: Long = 0,
     ) {
         /** Episodes added since the user last opened the series. */
         val fresh get() = if (seen > 0 && latest > seen) latest - seen else 0
 
+        /** How far into the episode at [ep] (0..1), or -1 when unknown. */
+        val progress get() = if (durMs > 0 && posMs > 0) (posMs.toFloat() / durMs).coerceIn(0f, 1f) else -1f
+
         fun toGroup(withProgress: Boolean) =
-            VodGroup(key, title, pic, if (withProgress && epName.isNotEmpty()) "看到 $epName" else "", items)
+            VodGroup(key, title, pic, if (withProgress && epName.isNotEmpty()) "看到 $epName" else "", items, progress = if (withProgress) progress else -1f)
 
         fun toFavoriteGroup() = VodGroup(
             key, title, pic,
@@ -45,7 +50,7 @@ object Library {
         )
     }
 
-    private class Helper(context: Context) : SQLiteOpenHelper(context, "tv.db", null, 2) {
+    private class Helper(context: Context) : SQLiteOpenHelper(context, "tv.db", null, 3) {
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL(
                 "CREATE TABLE favorites(k TEXT PRIMARY KEY, title TEXT NOT NULL, pic TEXT NOT NULL, items TEXT NOT NULL, time INTEGER NOT NULL, " +
@@ -53,7 +58,7 @@ object Library {
             )
             db.execSQL(
                 "CREATE TABLE history(k TEXT PRIMARY KEY, title TEXT NOT NULL, pic TEXT NOT NULL, items TEXT NOT NULL, " +
-                    "ep INTEGER NOT NULL, ep_name TEXT NOT NULL, pos INTEGER NOT NULL, time INTEGER NOT NULL)",
+                    "ep INTEGER NOT NULL, ep_name TEXT NOT NULL, pos INTEGER NOT NULL, time INTEGER NOT NULL, dur INTEGER NOT NULL DEFAULT 0)",
             )
         }
 
@@ -62,6 +67,7 @@ object Library {
                 db.execSQL("ALTER TABLE favorites ADD COLUMN seen INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE favorites ADD COLUMN latest INTEGER NOT NULL DEFAULT 0")
             }
+            if (oldVersion < 3) db.execSQL("ALTER TABLE history ADD COLUMN dur INTEGER NOT NULL DEFAULT 0")
         }
     }
 
@@ -76,7 +82,7 @@ object Library {
         Entry(c.getString(0), c.getString(1), c.getString(2), vodItemsFromJson(c.getString(3)), time = c.getLong(4), seen = c.getInt(5), latest = c.getInt(6))
 
     private fun history(c: Cursor) =
-        Entry(c.getString(0), c.getString(1), c.getString(2), vodItemsFromJson(c.getString(3)), c.getInt(4), c.getString(5), c.getLong(6), c.getLong(7))
+        Entry(c.getString(0), c.getString(1), c.getString(2), vodItemsFromJson(c.getString(3)), c.getInt(4), c.getString(5), c.getLong(6), c.getLong(7), durMs = c.getLong(8))
 
     fun favorites(): List<Entry> =
         db.rawQuery("SELECT k,title,pic,items,time,seen,latest FROM favorites ORDER BY time DESC", null).use { c ->
@@ -84,12 +90,12 @@ object Library {
         }
 
     fun history(limit: Int = 100): List<Entry> =
-        db.rawQuery("SELECT k,title,pic,items,ep,ep_name,pos,time FROM history ORDER BY time DESC LIMIT ?", arrayOf(limit.toString())).use { c ->
+        db.rawQuery("SELECT k,title,pic,items,ep,ep_name,pos,time,dur FROM history ORDER BY time DESC LIMIT ?", arrayOf(limit.toString())).use { c ->
             buildList { while (c.moveToNext()) add(history(c)) }
         }
 
     fun progress(key: String): Entry? =
-        db.rawQuery("SELECT k,title,pic,items,ep,ep_name,pos,time FROM history WHERE k=?", arrayOf(key)).use { c ->
+        db.rawQuery("SELECT k,title,pic,items,ep,ep_name,pos,time,dur FROM history WHERE k=?", arrayOf(key)).use { c ->
             if (c.moveToFirst()) history(c) else null
         }
 
@@ -121,7 +127,7 @@ object Library {
     fun saveProgress(e: Entry) {
         val cv = ContentValues().apply {
             put("k", e.key); put("title", e.title); put("pic", e.pic); put("items", e.items.toJsonString())
-            put("ep", e.ep); put("ep_name", e.epName); put("pos", e.posMs); put("time", System.currentTimeMillis())
+            put("ep", e.ep); put("ep_name", e.epName); put("pos", e.posMs); put("time", System.currentTimeMillis()); put("dur", e.durMs)
         }
         db.insertWithOnConflict("history", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
     }
@@ -132,12 +138,12 @@ object Library {
 
     private fun toJson(e: Entry) = JSONObject()
         .put("k", e.key).put("title", e.title).put("pic", e.pic).put("items", JSONArray(e.items.toJsonString()))
-        .put("ep", e.ep).put("epName", e.epName).put("pos", e.posMs).put("time", e.time).put("seen", e.seen).put("latest", e.latest)
+        .put("ep", e.ep).put("epName", e.epName).put("pos", e.posMs).put("time", e.time).put("seen", e.seen).put("latest", e.latest).put("dur", e.durMs)
 
     private fun fromJson(o: JSONObject) = Entry(
         o.getString("k"), o.getString("title"), o.optString("pic"), vodItemsFromJson(o.getJSONArray("items").toString()),
         o.optInt("ep"), o.optString("epName"), o.optLong("pos"), o.optLong("time", System.currentTimeMillis()),
-        o.optInt("seen"), o.optInt("latest"),
+        o.optInt("seen"), o.optInt("latest"), o.optLong("dur"),
     )
 
     fun exportJson(): JSONObject = JSONObject()
@@ -178,7 +184,7 @@ object Library {
                         "history", null,
                         ContentValues().apply {
                             put("k", e.key); put("title", e.title); put("pic", e.pic); put("items", e.items.toJsonString())
-                            put("ep", e.ep); put("ep_name", e.epName); put("pos", e.posMs); put("time", e.time)
+                            put("ep", e.ep); put("ep_name", e.epName); put("pos", e.posMs); put("time", e.time); put("dur", e.durMs)
                         },
                         SQLiteDatabase.CONFLICT_REPLACE,
                     )
@@ -219,7 +225,7 @@ object Library {
                         "history", null,
                         ContentValues().apply {
                             put("k", e.key); put("title", e.title); put("pic", e.pic); put("items", e.items.toJsonString())
-                            put("ep", e.ep); put("ep_name", e.epName); put("pos", e.posMs); put("time", e.time)
+                            put("ep", e.ep); put("ep_name", e.epName); put("pos", e.posMs); put("time", e.time); put("dur", e.durMs)
                         },
                         SQLiteDatabase.CONFLICT_REPLACE,
                     )

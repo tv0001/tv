@@ -1,9 +1,9 @@
 {
-  "versionCode": 34,
-  "versionName": "1.0.33",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.33.apk",
-  "sha256": "90c68b4217c8bf0900bfb45a7f1fb886400d56cc14f86891dba53e66b7092b28",
-  "size": 4569373,
-  "notes": "手机播放手势：双击画面左右两侧快退 / 快进 10 秒，接着在同一侧点还能继续跳，双击中间仍是暂停；长按 2 倍速时顶上显示「倍速播放中」并震动一下；调亮度、音量、进度的提示带图标和进度条，电视遥控器快进时也有进度条。",
+  "versionCode": 35,
+  "versionName": "1.0.34",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.34.apk",
+  "sha256": "aabd74e7a2d92b8d93e1a2e1218925d2d7d20227853648d095c41350c116ed60",
+  "size": 4582110,
+  "notes": "手机横屏全屏换新：顶栏显示片名、时间电量，底栏加「倍速」「选集」，倍速 / 选集 / 设置从右边滑出，左边加锁屏键；续播时提示「已从 xx:xx 继续播放」，可一键从头播放；继续观看的海报带进度条。电视：首页第一页是「继续观看」，移动焦点就切换标签，点热播搜索后焦点直接落到结果上，控制栏加进度条。平板：画面上有标题和倍速、选集按钮，右侧面板更紧凑。",
   "force": false
 }

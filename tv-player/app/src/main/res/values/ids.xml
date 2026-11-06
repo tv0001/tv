@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 代码里搭的视图要用的 id -->
+    <item name="resumeText" type="id" />
+</resources>

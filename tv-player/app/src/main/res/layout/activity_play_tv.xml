@@ -6,17 +6,78 @@
     android:background="@color/bg"
     android:fitsSystemWindows="true"
     android:orientation="horizontal">
-
-    <androidx.media3.ui.PlayerView
-        android:id="@+id/player"
+    <!-- 画面 + 左上角的返回、片名 · 集名、时间（跟控制栏一起淡入淡出，见 PlayActivity.setupLandControls） -->
+    <FrameLayout
         android:layout_width="0dp"
         android:layout_height="match_parent"
         android:layout_weight="3"
-        android:background="@android:color/black"
-        android:focusable="true"
-        app:resize_mode="fit"
-        app:show_buffering="when_playing"
-        app:use_controller="true" />
+        android:background="@android:color/black">
+
+        <androidx.media3.ui.PlayerView
+            android:id="@+id/player"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@android:color/black"
+            android:focusable="true"
+            app:resize_mode="fit"
+            app:show_buffering="when_playing"
+            app:use_controller="true" />
+
+        <FrameLayout
+            android:id="@+id/landOverlay"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent">
+
+            <LinearLayout
+                android:id="@+id/landTop"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top"
+                android:background="@drawable/bg_top_scrim"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="8dp"
+                android:paddingTop="8dp"
+                android:paddingEnd="16dp"
+                android:paddingBottom="28dp">
+
+                <ImageButton
+                    android:id="@+id/back"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="@string/back"
+                    android:src="@drawable/ic_back" />
+
+                <TextView
+                    android:id="@+id/vTitle"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:shadowColor="#99000000"
+                    android:shadowRadius="6"
+                    android:textColor="@android:color/white"
+                    android:textSize="17sp" />
+
+                <TextView
+                    android:id="@+id/landClock"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
+                    android:fontFeatureSettings="tnum"
+                    android:shadowColor="#99000000"
+                    android:shadowRadius="6"
+                    android:textColor="#DDFFFFFF"
+                    android:textSize="13sp" />
+
+            </LinearLayout>
+
+        </FrameLayout>
+
+    </FrameLayout>
 
     <LinearLayout
         android:id="@+id/panel"
@@ -43,32 +104,41 @@
             android:textAppearance="@style/TextAppearance.TvPlayer.Body"
             android:textColor="@color/on_surface_variant" />
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/favorite"
-            style="@style/Widget.TvPlayer.TonalButton"
+        <!-- 收藏、投屏、设置排成一排（图标在上、文字在下），和手机一样，给下面的选集多留地方 -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="@string/favorite"
-            app:icon="@drawable/ic_heart_outline" />
+            android:layout_marginTop="12dp"
+            android:orientation="horizontal">
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/cast"
-            style="@style/Widget.TvPlayer.TonalButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="@string/cast"
-            app:icon="@drawable/ic_cast" />
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/favorite"
+                style="@style/Widget.TvPlayer.Action"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/favorite"
+                app:icon="@drawable/ic_heart_outline" />
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/playSettings"
-            style="@style/Widget.TvPlayer.TonalButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="播放设置"
-            app:icon="@drawable/ic_settings" />
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/cast"
+                style="@style/Widget.TvPlayer.Action"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/cast"
+                app:icon="@drawable/ic_cast" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/playSettings"
+                style="@style/Widget.TvPlayer.Action"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="设置"
+                app:icon="@drawable/ic_settings" />
+
+        </LinearLayout>
 
         <TextView
             android:layout_width="wrap_content"

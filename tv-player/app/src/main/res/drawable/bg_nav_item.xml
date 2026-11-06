@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 侧边导航的一项：遥控器焦点时一圈 2dp 蓝色描边（选中项本来就有底色，不描边就看不出焦点在不在它上面） -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_focused="true">
+        <inset
+            android:insetLeft="6dp"
+            android:insetRight="6dp">
+            <shape>
+                <solid android:color="#14FFFFFF" />
+                <stroke
+                    android:width="2dp"
+                    android:color="@color/accent" />
+                <corners android:radius="16dp" />
+            </shape>
+        </inset>
+    </item>
+    <item>
+        <color android:color="@android:color/transparent" />
+    </item>
+</selector>

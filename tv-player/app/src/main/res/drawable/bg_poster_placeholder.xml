@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 没有海报或海报加载失败：深灰底中间一个淡淡的胶片图标，不再是一块空白 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 给整张图一个 2:3 的固有尺寸：海报用 centerCrop，图标会按海报大小等比缩放，而不是被拉满 -->
+    <item
+        android:width="120dp"
+        android:height="180dp"
+        android:drawable="@drawable/bg_poster" />
+    <item
+        android:width="40dp"
+        android:height="40dp"
+        android:gravity="center">
+        <vector
+            android:width="24dp"
+            android:height="24dp"
+            android:viewportWidth="24"
+            android:viewportHeight="24">
+            <path
+                android:fillColor="#40FFFFFF"
+                android:pathData="M18,3v2h-2V3H8v2H6V3H4v18h2v-2h2v2h8v-2h2v2h2V3h-2zM8,17H6v-2h2v2zm0,-4H6v-2h2v2zm0,-4H6V7h2v2zm10,8h-2v-2h2v2zm0,-4h-2v-2h2v2zm0,-4h-2V7h2v2z" />
+        </vector>
+    </item>
+</layer-list>
