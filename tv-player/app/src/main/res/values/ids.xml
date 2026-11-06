@@ -2,4 +2,6 @@
 <resources>
     <!-- 代码里搭的视图要用的 id -->
     <item name="resumeText" type="id" />
+    <item name="pressScale" type="id" />
+    <item name="cover" type="id" />
 </resources>

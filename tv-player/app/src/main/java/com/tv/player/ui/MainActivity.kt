@@ -54,6 +54,7 @@ class MainActivity : BaseActivity() {
         }
 
         val nav = findViewById<NavigationBarView>(R.id.nav)
+        if (nav is com.google.android.material.navigationrail.NavigationRailView) setupSideNav(nav)
         nav.setOnItemSelectedListener { item ->
             val target = navIds.indexOf(item.itemId)
             if (target < 0) return@setOnItemSelectedListener false
@@ -87,6 +88,34 @@ class MainActivity : BaseActivity() {
                 if (result.error == null) Store.markUpdateChecked()
                 result.info?.let { UpdateUi.prompt(this@MainActivity, it) }
             }
+        }
+    }
+
+    /**
+     * 侧边导航（电视、平板）：焦点项铺一层半透明浅色底、图标和字变白；导航有焦点时收起选中项的蓝色底块，只留蓝字，
+     * 免得「焦点」和「当前页」两种块叠在一起分不清。电视上焦点在右边内容里时，导航整体压暗，让位给海报。
+     */
+    private fun setupSideNav(nav: com.google.android.material.navigationrail.NavigationRailView) {
+        // 条目里的图标和字默认不跟条目的焦点状态走，颜色表里的 state_focused 就不生效
+        fun follow(v: android.view.View) {
+            v.isDuplicateParentStateEnabled = true
+            if (v is android.view.ViewGroup) for (i in 0 until v.childCount) follow(v.getChildAt(i))
+        }
+        val menuView = (0 until nav.childCount).map { nav.getChildAt(it) }
+            .firstOrNull { it is com.google.android.material.navigation.NavigationBarMenuView } as? android.view.ViewGroup ?: return
+        for (i in 0 until menuView.childCount) {
+            val item = menuView.getChildAt(i) as? android.view.ViewGroup ?: continue
+            for (j in 0 until item.childCount) follow(item.getChildAt(j))
+        }
+        val indicator = nav.itemActiveIndicatorColor
+        val tv = isTv()
+        if (tv) nav.alpha = 0.7f
+        window.decorView.viewTreeObserver.addOnGlobalFocusChangeListener { _, now ->
+            var p: android.view.View? = now
+            while (p != null && p !== nav) p = p.parent as? android.view.View
+            val inNav = p === nav
+            nav.itemActiveIndicatorColor = if (inNav) android.content.res.ColorStateList.valueOf(android.graphics.Color.TRANSPARENT) else indicator
+            if (tv) nav.animate().alpha(if (inNav) 1f else 0.7f).setDuration(160).start()
         }
     }
 

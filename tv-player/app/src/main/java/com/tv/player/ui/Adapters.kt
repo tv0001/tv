@@ -68,7 +68,29 @@ fun Context.gridSpan(minSpan: Int = 3): Int =
 /** Remote-control focus feedback: the focused card grows a little. */
 fun View.zoomOnFocus(scale: Float = 1.06f) {
     setOnFocusChangeListener { v, focused ->
-        v.animate().scaleX(if (focused) scale else 1f).scaleY(if (focused) scale else 1f).setDuration(120).start()
+        // 电视上片名放不下时，拿到焦点就滚动显示全名（跑马灯），离开恢复省略号
+        v.findViewById<TextView?>(R.id.title)?.takeIf { v.context.isTv() }?.let { t ->
+            t.isSingleLine = true
+            t.marqueeRepeatLimit = -1
+            t.ellipsize = if (focused) android.text.TextUtils.TruncateAt.MARQUEE else android.text.TextUtils.TruncateAt.END
+            t.isSelected = focused
+        }
+        // 插值器要每次写明：同一个 View 的 animate() 会沿用上一次设的（按压回弹用的是 Overshoot）
+        v.animate().scaleX(if (focused) scale else 1f).scaleY(if (focused) scale else 1f).setDuration(120)
+            .setInterpolator(android.view.animation.AccelerateDecelerateInterpolator()).start()
+    }
+    // 手指按下时海报轻轻缩一下、松开弹回（腾讯视频、B 站都有），点没点上一眼就知道；滑动列表时 CANCEL 也会弹回
+    if (getTag(R.id.pressScale) == null) {
+        setTag(R.id.pressScale, true)
+        setOnTouchListener { v, e ->
+            when (e.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> v.animate().scaleX(0.96f).scaleY(0.96f).setDuration(90)
+                    .setInterpolator(android.view.animation.DecelerateInterpolator()).start()
+                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL ->
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(160).setInterpolator(android.view.animation.OvershootInterpolator(2f)).start()
+            }
+            false
+        }
     }
 }
 
@@ -262,9 +284,67 @@ class ChipAdapter(var fill: Boolean = false, private val onClick: (Int) -> Unit)
         return Holder(text)
     }
 
+    /** 正在播的那一格在名字前画跳动的音柱（腾讯视频、爱奇艺的选集），只用在手机、平板的选集上 */
+    var playingMark = false
+
     override fun onBindViewHolder(h: Holder, position: Int) {
-        h.text.text = labels[position]
+        val label = labels[position]
+        h.text.text = if (playingMark && position == selected) {
+            val bars = PlayingBars(h.text)
+            android.text.SpannableString("  $label").apply {
+                setSpan(android.text.style.ImageSpan(bars, android.text.style.ImageSpan.ALIGN_BASELINE), 0, 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+        } else label
         h.text.isSelected = position == selected
         h.text.setOnClickListener { onClick(h.bindingAdapterPosition) }
     }
+}
+
+/**
+ * 三根上下跳的竖条。画在文字里（ImageSpan），自己按 15 帧左右请求重画：格子滚出屏幕或换成别的字就不再画，循环也就停了。
+ * 系统关掉动画时画成静止的三根。
+ */
+class PlayingBars(private val host: View) : android.graphics.drawable.Drawable() {
+    private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        color = androidx.core.content.ContextCompat.getColor(host.context, R.color.accent)
+    }
+    // 同一时间只挂一次重画：列表滑动、水波纹这些额外的重画不会各自再起一条循环
+    private val next = Runnable { host.invalidate() }
+    private val still = android.provider.Settings.Global.getFloat(
+        host.context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f,
+    ) == 0f
+
+    init {
+        val size = host.context.dp(12)
+        setBounds(0, 0, size, size)
+    }
+
+    override fun draw(canvas: android.graphics.Canvas) {
+        val b = bounds
+        val gap = b.width() / 7f
+        val w = (b.width() - gap * 2) / 3f
+        val t = if (still) 0.0 else android.os.SystemClock.uptimeMillis() / 1000.0
+        for (i in 0 until 3) {
+            // 三根各自的节奏错开，看起来像在跳
+            val k = if (still) listOf(0.6, 1.0, 0.4)[i] else 0.35 + 0.65 * (0.5 + 0.5 * kotlin.math.sin(t * (5.0 + i * 1.7) + i * 1.3))
+            val h = (b.height() * k).toFloat()
+            val left = b.left + i * (w + gap)
+            canvas.drawRoundRect(left, b.bottom - h, left + w, b.bottom.toFloat(), w / 2, w / 2, paint)
+        }
+        if (!still) {
+            host.removeCallbacks(next)
+            host.postDelayed(next, 66)
+        }
+    }
+
+    override fun setAlpha(alpha: Int) {
+        paint.alpha = alpha
+    }
+
+    override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) {
+        paint.colorFilter = colorFilter
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun getOpacity() = android.graphics.PixelFormat.TRANSLUCENT
 }

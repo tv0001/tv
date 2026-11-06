@@ -7,36 +7,6 @@
     android:background="@color/bg"
     android:fitsSystemWindows="true">
 
-    <LinearLayout
-        android:id="@+id/topbar"
-        android:layout_width="0dp"
-        android:layout_height="52dp"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent">
-
-        <ImageButton
-            android:id="@+id/back"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/back"
-            android:src="@drawable/ic_back" />
-
-        <TextView
-            android:id="@+id/title"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:ellipsize="end"
-            android:maxLines="1"
-            android:paddingEnd="16dp"
-            android:textAppearance="@style/TextAppearance.TvPlayer.ItemTitle" />
-
-    </LinearLayout>
-
     <androidx.media3.ui.PlayerView
         android:id="@+id/player"
         android:layout_width="0dp"
@@ -45,10 +15,54 @@
         app:layout_constraintDimensionRatio="16:9"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/topbar"
+        app:layout_constraintTop_toTopOf="parent"
         app:resize_mode="fit"
         app:show_buffering="when_playing"
         app:use_controller="true" />
+
+    <!-- 小窗的顶栏压在画面上（腾讯视频、B 站的竖屏小窗没有单独的标题栏）：返回键常驻，渐变和片名跟控制栏一起淡入淡出 -->
+    <FrameLayout
+        android:id="@+id/topbar"
+        android:layout_width="0dp"
+        android:layout_height="64dp"
+        app:layout_constraintEnd_toEndOf="@id/player"
+        app:layout_constraintStart_toStartOf="@id/player"
+        app:layout_constraintTop_toTopOf="@id/player">
+
+        <View
+            android:id="@+id/topScrim"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/bg_top_scrim"
+            android:visibility="invisible" />
+
+        <ImageButton
+            android:id="@+id/back"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="8dp"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_overlay_button"
+            android:contentDescription="@string/back"
+            android:src="@drawable/ic_back" />
+
+        <TextView
+            android:id="@+id/title"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:layout_marginStart="56dp"
+            android:layout_marginTop="8dp"
+            android:layout_marginEnd="16dp"
+            android:ellipsize="end"
+            android:gravity="center_vertical"
+            android:maxLines="1"
+            android:shadowColor="#99000000"
+            android:shadowRadius="6"
+            android:textColor="@android:color/white"
+            android:textSize="15sp"
+            android:visibility="invisible" />
+
+    </FrameLayout>
 
     <!-- 小窗下面那一栏：竖屏视频时列表上滚先收矮播放器，往下拖进竖屏全屏（见 CollapsingContent） -->
     <com.tv.player.ui.CollapsingContent
@@ -71,23 +85,74 @@
             android:src="@drawable/ic_sheet_handle"
             android:visibility="gone" />
 
+        <!-- 片名、评分 / 年份 / 类型 / 更新到哪，右边「简介 ›」：点这一块从下面弹出简介（腾讯视频、爱奇艺的详情区） -->
+        <LinearLayout
+            android:id="@+id/headBox"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="?attr/selectableItemBackground"
+            android:orientation="vertical"
+            android:paddingStart="16dp"
+            android:paddingTop="12dp"
+            android:paddingEnd="16dp"
+            android:paddingBottom="4dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/headTitle"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:textColor="@color/on_surface"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/synopsisLink"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:paddingStart="12dp"
+                    android:text="简介 ›"
+                    android:textAppearance="@style/TextAppearance.TvPlayer.Caption"
+                    android:visibility="gone" />
+
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/meta"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textAppearance="@style/TextAppearance.TvPlayer.Caption"
+                android:visibility="gone" />
+
+        </LinearLayout>
+
         <TextView
             android:id="@+id/info"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:paddingStart="16dp"
-            android:paddingTop="8dp"
+            android:paddingTop="2dp"
             android:paddingEnd="16dp"
-            android:textAppearance="@style/TextAppearance.TvPlayer.Body"
-            android:textColor="@color/on_surface_variant" />
+            android:textAppearance="@style/TextAppearance.TvPlayer.Caption" />
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:paddingStart="16dp"
-            android:paddingTop="6dp"
-            android:paddingEnd="16dp">
+            android:paddingStart="8dp"
+            android:paddingTop="4dp"
+            android:paddingEnd="8dp">
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/favorite"
@@ -97,6 +162,15 @@
                 android:layout_weight="1"
                 android:text="@string/favorite"
                 app:icon="@drawable/ic_heart_outline" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/download"
+                style="@style/Widget.TvPlayer.Action"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="下载"
+                app:icon="@drawable/ic_download" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/cast"
@@ -137,14 +211,36 @@
             android:paddingEnd="12dp"
             app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager" />
 
-        <TextView
-            android:id="@+id/epLabel"
-            android:layout_width="wrap_content"
+        <!-- 「选集」左边，右边灰字写更新到哪、共几集 -->
+        <LinearLayout
+            android:id="@+id/epHead"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
             android:paddingStart="16dp"
-            android:paddingTop="2dp"
-            android:text="选集"
-            android:textAppearance="@style/TextAppearance.TvPlayer.Section" />
+            android:paddingTop="6dp"
+            android:paddingEnd="16dp">
+
+            <TextView
+                android:id="@+id/epLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="选集"
+                android:textAppearance="@style/TextAppearance.TvPlayer.Section" />
+
+            <TextView
+                android:id="@+id/epCount"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:gravity="end"
+                android:maxLines="1"
+                android:paddingStart="12dp"
+                android:textAppearance="@style/TextAppearance.TvPlayer.Caption" />
+
+        </LinearLayout>
 
         <androidx.recyclerview.widget.RecyclerView
         android:descendantFocusability="afterDescendants"

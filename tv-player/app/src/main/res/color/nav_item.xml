@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Side navigation: the selected page reads in the light-blue used on accent_container, the others stay muted. -->
+<!-- Side navigation: the selected page reads in the light-blue used on accent_container, the others stay muted.
+     焦点项（半透明浅色底，bg_nav_item）上的图标和字用纯白，比别的项亮一档；电视上子视图跟着条目的状态走（MainActivity.setupSideNav） -->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:color="@android:color/white" android:state_focused="true" />
     <item android:color="#D6E4FF" android:state_selected="true" />
-    <item android:color="@color/on_surface" android:state_focused="true" />
     <item android:color="@color/on_surface_variant" />
 </selector>

@@ -162,6 +162,7 @@ import kotlin.math.roundToInt
 class PlayActivity : BaseActivity() {
     companion object {
         private const val STALL_MS = 20_000L
+        private const val MID_STALL_MS = 15_000L // 播放中途连续缓冲这么久（没报错、只是不来数据），有别的线路就换过去
         private const val TALL_BOX = 0.5f // 竖屏视频的小窗最高占页面的这么多
         private const val FLICK_DP = 1000 // 每秒这么多 dp 以上算「甩」
         private const val NEXT_CARD_MAX_MS = 6_000L // 下一集的卡片最多盖这么久
@@ -236,6 +237,8 @@ class PlayActivity : BaseActivity() {
     private var pendingStart = 0L
     private var started = false
     private var allFailed = false
+    /** 第一帧画面出来过：起播前的海报封面不再出现（换布局后也一样） */
+    private var firstFrameShown = false
     private var infoText = ""
 
     /** Real resolution of the stream that is playing, e.g. "1080P"; remembered per line so the line chips can show it. */
@@ -398,6 +401,42 @@ class PlayActivity : BaseActivity() {
         Log.d("TVP", "stalled on ${current?.label}")
         failOver()
     }
+
+    /**
+     * 播放中途卡住、又没报错（服务器只是不怎么来数据）：以前会一直转圈。连续缓冲 [MID_STALL_MS] 还没缓过来，
+     * 而下一条线路测速是流畅的（后台测速的结果，和起播慢时的 [rescue] 同一个判断），就从当前位置换过去。
+     * 没有测过是流畅的线路时不换：可能是自家网络慢，挨个换线只会每条都重新缓冲，最后全判失败、播放停掉。
+     * 每集最多换一次，免得网络整体变慢时来回跳；换过去的那条要是起不来，回到原来那条（见 [failOver]），
+     * 不接着往下换到「全部失败」。手动选过线路、选线方式是「按顺序」、看回看时都不自动换（和 [rescue] 一样）。
+     */
+    private val midStall = Runnable {
+        val p = player ?: return@Runnable
+        if (!started || allFailed || midStallSwitched || replayMode || pinned || !smartOn()) return@Runnable
+        if (p.playbackState != Player.STATE_BUFFERING || !p.playWhenReady || !isOnline()) return@Runnable
+        val best = (if (isLive) rank(rawCandidates()) else candidatesAt(curEp)).firstOrNull { it.url !in tried } ?: return@Runnable
+        if (probes[best.url]?.smooth != true) return@Runnable
+        val from = current ?: return@Runnable
+        midStallSwitched = true
+        midStallBack = from to resolvedUrl
+        Log.d("TVP", "mid-play stall on ${from.label}, switching to ${best.label}")
+        flashHud("这条线路卡住了，换到更流畅的一条", 2_500)
+        failOver()
+    }
+    private var midStallSwitched = false // 这一集已经因为中途卡住换过一次线
+    /** 因为中途卡住换走的那条线路（和它解析好的地址）：换过去的起不来就回到它；新线路放起来后清掉 */
+    private var midStallBack: Pair<Cand, String?>? = null
+
+    /** 缓冲中途暂停 / 继续也要重新计时：只在想播的时候卡着才算 */
+    private fun armMidStall() {
+        handler.removeCallbacks(midStall)
+        val p = player ?: return
+        if (p.playbackState == Player.STATE_BUFFERING && started && p.playWhenReady) handler.postDelayed(midStall, MID_STALL_MS)
+    }
+
+    // 缓冲时转圈下面的网速（整个应用这一秒收了多少字节，和主流 App 的「xx KB/s」一样）
+    private var speedLabel: TextView? = null
+    private var lastRx = -1L
+    private var lastDelta = -1L
     private val saver = object : Runnable {
         override fun run() {
             saveProgress()
@@ -707,6 +746,7 @@ class PlayActivity : BaseActivity() {
             controllerShown = it == View.VISIBLE
             syncThinProgress()
             syncLandOverlay()
+            syncSmallTop()
             // 控制栏出来时续播提示会压在进度条上：先收起（点提示本身的「从头播放」不受影响，它在控制栏上面）
             if (controllerShown) resumeTip?.takeIf { t -> t.visibility == View.VISIBLE }?.let { t -> handler.removeCallbacks(hideResumeTip); fadeTo(t, false, gone = true) }
         })
@@ -717,7 +757,19 @@ class PlayActivity : BaseActivity() {
         playerView.findViewById<View?>(androidx.media3.ui.R.id.exo_settings)?.setOnClickListener { showPlaySettings() }
         playerView.resizeMode = resizeModeOf(Store.resizeMode())
         findViewById<TextView?>(R.id.title)?.text = title
+        findViewById<TextView?>(R.id.headTitle)?.text = title
+        findViewById<View?>(R.id.headBox)?.apply {
+            setOnClickListener { showSynopsis() }
+            isClickable = details[curSrc]?.let(::hasSynopsis) == true
+        }
         findViewById<View?>(R.id.back)?.setOnClickListener { onBackPressedDispatcher.onBackPressed() }
+        findViewById<View?>(R.id.download)?.apply {
+            visibility = if (canDownload()) View.VISIBLE else View.GONE
+            setOnClickListener { downloadEpisode() }
+        }
+        setupCover()
+        setupSpeedLabel()
+        syncSmallTop(animate = false)
         // The tall full screen's own buttons: that layer is part of this layout and fades in as the picture grows.
         findViewById<View?>(R.id.vBack)?.setOnClickListener { onBackPressedDispatcher.onBackPressed() }
         findViewById<View?>(R.id.vExit)?.setOnClickListener { setPortraitFull(false) }
@@ -754,10 +806,12 @@ class PlayActivity : BaseActivity() {
             it.layoutManager = if (isTv) LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
             else GridLayoutManager(this, if (panel != null) 3 else 4)
             epAdapter.fill = !isTv
+            epAdapter.playingMark = !isTv
             it.adapter = epAdapter
             if (isLive) it.visibility = View.GONE
         }
         epLabel = findViewById<TextView?>(R.id.epLabel)?.also { if (isLive) it.visibility = View.GONE }
+        if (isLive) findViewById<View?>(R.id.epHead)?.visibility = View.GONE
 
         playerView.setFullscreenButtonClickListener { full ->
             if (panel != null) {
@@ -1389,9 +1443,13 @@ class PlayActivity : BaseActivity() {
     /** The details page text: score, year / category / area / status, people, synopsis; the blurred backdrop. */
     private fun fillDetail() {
         val d = details[curSrc] ?: return
-        findViewById<TextView?>(R.id.meta)?.text =
-            listOf(d.score.takeIf { it.isNotEmpty() }?.let { "$it 分" }.orEmpty(), d.year, d.type, d.area, d.remarks)
-                .filter { it.isNotEmpty() }.joinToString("  /  ")
+        findViewById<TextView?>(R.id.meta)?.let { meta ->
+            meta.text = listOf(d.score.takeIf { it.isNotEmpty() }?.let { "$it 分" }.orEmpty(), d.year, d.type, d.area, d.remarks)
+                .filter { it.isNotEmpty() }.joinToString(if (isTv) "  /  " else " · ")
+            if (!isTv) meta.visibility = if (meta.text.isEmpty()) View.GONE else View.VISIBLE
+        }
+        findViewById<View?>(R.id.synopsisLink)?.visibility = if (hasSynopsis(d)) View.VISIBLE else View.GONE
+        findViewById<View?>(R.id.headBox)?.isClickable = hasSynopsis(d) // 没简介可看时点了也没有水波纹
         findViewById<ImageView?>(R.id.backdrop)?.let { img ->
             if (img.tag == null) {
                 img.tag = true
@@ -1472,6 +1530,8 @@ class PlayActivity : BaseActivity() {
 
         override fun onPlaybackStateChanged(state: Int) {
             updateKeepScreen()
+            armMidStall()
+            syncSpeed()
             // Buffering in the middle of playing, not after a seek or at the start, is a stall.
             if (state == Player.STATE_BUFFERING && started && !isLive && player?.playWhenReady == true && SystemClock.elapsedRealtime() - lastSeekAt > 1_500) {
                 stallPolicy.onStall()
@@ -1482,6 +1542,8 @@ class PlayActivity : BaseActivity() {
             when (state) {
                 Player.STATE_READY -> {
                     if (quietControls) setQuietControls(false)
+                    // 只有声音的流不会有第一帧：就绪一会儿后照样收起封面
+                    if (!firstFrameShown) handler.postDelayed(dropCover, 600)
                     endStall("缓过来了")
                     if (!started) Log.d("TVP", "ready on ${current?.label}")
                     // A few seconds into the episode, once it plays steadily, the next one is loaded ahead.
@@ -1504,6 +1566,7 @@ class PlayActivity : BaseActivity() {
                     val resumed = pendingStart > 0
                     val wanted = pendingStart
                     started = true
+                    midStallBack = null // 换过去的这条放起来了
                     pendingStart = 0
                     // Carried over from a line that cuts the series differently (one file for every episode against one
                     // per episode): a position past this stream's end would only finish it, so start it from the top.
@@ -1535,6 +1598,10 @@ class PlayActivity : BaseActivity() {
         }
 
         override fun onRenderedFirstFrame() {
+            if (!firstFrameShown) {
+                firstFrameShown = true
+                syncCover()
+            }
             handler.removeCallbacks(hideNextCard)
             handler.post(hideNextCard)
         }
@@ -1570,7 +1637,11 @@ class PlayActivity : BaseActivity() {
             if (overlay && panel?.visibility == View.VISIBLE) bumpPanel()
         }
 
-        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) = updateKeepScreen()
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            updateKeepScreen()
+            armMidStall()
+            syncSpeed()
+        }
 
         override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
             if (!isLive && !speedBoost) {
@@ -1729,6 +1800,8 @@ class PlayActivity : BaseActivity() {
         seekPending = -1
         handler.removeCallbacks(commitSeek)
         allFailed = false
+        midStallSwitched = false
+        midStallBack = null
         updateKeepScreen()
         tried.clear()
         pendingStart = startMs
@@ -1819,6 +1892,16 @@ class PlayActivity : BaseActivity() {
         }
         // Dropped mid-playback: carry on from here on the next line instead of starting over.
         if (!isLive && started) pendingStart = player?.currentPosition ?: pendingStart
+        // 中途卡住换过去的那条没起来：回到原来那条（慢总比停掉强），不接着挨个换到「全部失败」
+        midStallBack?.takeIf { !started }?.let { back ->
+            midStallBack = null
+            tried.remove(back.first.url)
+            if (back.first.src >= 0) curSrc = back.first.src
+            if (back.first.line >= 0) curLine = back.first.line
+            quickFirst = back
+            refreshLists()
+            Log.d("TVP", "the line switched to after a stall did not start, back to ${back.first.label}")
+        }
         failOvers++
         attempt()
     }
@@ -1835,6 +1918,7 @@ class PlayActivity : BaseActivity() {
         retriedAt = 0L // 新线路有自己的一次原地重试
         handler.removeCallbacks(retryNow)
         handler.removeCallbacks(stall)
+        handler.removeCallbacks(midStall)
         // 控制栏这时没出来就别让它自己弹出来；用户正开着的（比如刚点了下一集）照常按超时收起
         if (!controllerShown) setQuietControls(true)
         player?.stop()
@@ -1858,6 +1942,7 @@ class PlayActivity : BaseActivity() {
                     player?.stop()
                     prefetch?.reset()
                     allFailed = true
+                    dropCover.run()
                     if (portraitFull) setPortraitFull(false) // the message is on the page behind
                     updateKeepScreen()
                     setInfo(if (QuarkWeb.expired && items.any { it.sourceKey == QuarkWeb.SOURCE_KEY }) "夸克网盘的网页版登录已失效，请到设置里重新扫码登录" else "所有线路都试过了，没有能播放的。点这里重试，或换一部")
@@ -2105,6 +2190,7 @@ class PlayActivity : BaseActivity() {
         val first = details[curSrc]
         if (first == null) {
             setInfo("没有可用的播放线路，换个关键词重新搜")
+            dropCover.run()
             return
         }
         curLine = if (last != null && items[curSrc].sourceKey == last.first) {
@@ -2283,6 +2369,7 @@ class PlayActivity : BaseActivity() {
             if (index != curEp) selectEpisode(index)
         }
         val names = episodes.map { Regex("^第0*(\\d+)[集期话]$").find(it.name)?.groupValues?.get(1) ?: it.name }
+        chips.playingMark = !isTv
         chips.submit(names, curEp)
         if (drawers) {
             // 横屏：右侧抽屉，画面留在左边（腾讯视频、B 站横屏的选集）
@@ -2387,7 +2474,11 @@ class PlayActivity : BaseActivity() {
         val label = { n: String -> if (isTv) Regex("^第0*(\\d+)[集期话]$").find(n)?.groupValues?.get(1) ?: n else n }
         epAdapter.submit(shown.map { label(it.name) }, curEp - epOffset)
         applyEpisodeSpan(shown.map { label(it.name) })
-        epLabel?.text = "选集（共 ${episodes.size} 集）"
+        val countView = findViewById<TextView?>(R.id.epCount)
+        if (countView != null) {
+            epLabel?.text = "选集"
+            countView.text = if (episodes.size > 1) "共 ${episodes.size} 集" else "" // 「更新至…」片名下面已经写了
+        } else epLabel?.text = "选集（共 ${episodes.size} 集）"
         updateOverlayTitle()
         episodesView?.scrollToPosition((curEp - epOffset).coerceAtLeast(0))
     }
@@ -2463,6 +2554,7 @@ class PlayActivity : BaseActivity() {
     private val ticker = object : Runnable {
         override fun run() {
             tick++
+            syncSpeed(tick = true)
             if (sleepAtMs > 0 && SystemClock.elapsedRealtime() >= sleepAtMs) sleepNow("睡眠定时到了，已暂停")
             val p = player
             if (!isLive && started && p != null && !outroDone) {
@@ -2559,6 +2651,7 @@ class PlayActivity : BaseActivity() {
         started = false
         resolution = ""
         findViewById<TextView?>(R.id.title)?.text = title
+        findViewById<TextView?>(R.id.headTitle)?.text = title
         updateOverlayTitle()
         applyRememberedLine()
         needWarm = true
@@ -2681,8 +2774,7 @@ class PlayActivity : BaseActivity() {
 
         // 离线下载：手机、平板上的点播（网盘和网络存储的文件本来就能直接看，不下）
         view.findViewById<View>(R.id.downloadEp).apply {
-            val fromDrive = items.any { it.sourceKey == Quark.SOURCE_KEY || it.sourceKey == QuarkWeb.SOURCE_KEY || it.sourceKey == NetStore.SOURCE_KEY }
-            visibility = if (!isTv && !isLive && !replayMode && !fromDrive) View.VISIBLE else View.GONE
+            visibility = if (canDownload()) View.VISIBLE else View.GONE
             setOnClickListener { downloadEpisode() }
         }
 
@@ -2774,6 +2866,10 @@ class PlayActivity : BaseActivity() {
     /** The whole synopsis (the details page shows three lines). */
     private fun showSynopsis() {
         val d = details[curSrc] ?: return
+        if (!isTv && !drawers) {
+            if (hasSynopsis(d)) showSynopsisSheet(d)
+            return
+        }
         if (d.content.isEmpty()) return
         val text = TextView(this).apply {
             text = d.content
@@ -2782,6 +2878,146 @@ class PlayActivity : BaseActivity() {
             setPadding(dp(24), 0, dp(24), dp(16))
         }
         showSidePanel(d.title.ifEmpty { title }, android.widget.ScrollView(this).apply { isFocusable = true; addView(text) }, scrollOnly = true)
+    }
+
+    private fun hasSynopsis(d: VodDetail) = d.content.isNotEmpty() || d.actor.isNotEmpty() || d.director.isNotEmpty()
+
+    /** 手机竖屏的简介：底部面板，片名、评分年份、导演主演、全文（腾讯视频、爱奇艺点「简介」弹出的那一页） */
+    private fun showSynopsisSheet(d: VodDetail) {
+        val sheet = BottomSheetDialog(this)
+        fun text(value: String, style: Int, top: Int = 0, color: Int? = null) = TextView(this).apply {
+            text = value
+            TextViewCompat.setTextAppearance(this, style)
+            color?.let { setTextColor(ContextCompat.getColor(this@PlayActivity, it)) }
+            setLineSpacing(0f, 1.3f)
+            setPadding(dp(24), dp(top), dp(24), 0)
+        }
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(text(d.title.ifEmpty { title }, R.style.TextAppearance_TvPlayer_Headline))
+            val meta = listOf(d.score.takeIf { it.isNotEmpty() }?.let { "$it 分" }.orEmpty(), d.year, d.type, d.area, d.remarks)
+                .filter { it.isNotEmpty() }.joinToString(" · ")
+            if (meta.isNotEmpty()) addView(text(meta, R.style.TextAppearance_TvPlayer_Caption, top = 6))
+            if (d.director.isNotEmpty()) addView(text("导演：${d.director}", R.style.TextAppearance_TvPlayer_Body, top = 16, color = R.color.on_surface_variant))
+            if (d.actor.isNotEmpty()) addView(text("主演：${d.actor}", R.style.TextAppearance_TvPlayer_Body, top = if (d.director.isEmpty()) 16 else 4, color = R.color.on_surface_variant))
+            if (d.content.isNotEmpty()) {
+                addView(text("简介", R.style.TextAppearance_TvPlayer_Section, top = 20))
+                addView(text(d.content, R.style.TextAppearance_TvPlayer_Body, top = 8))
+            }
+            setPadding(0, 0, 0, dp(24))
+        }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(BottomSheetDragHandleView(this@PlayActivity))
+            addView(androidx.core.widget.NestedScrollView(this@PlayActivity).apply { addView(body) })
+        }
+        sheet.setContentView(box)
+        // 只盖住小窗下面那一块，画面照样看得见
+        val maxH = (findViewById<View?>(R.id.content)?.height ?: 0).takeIf { it > dp(240) }
+        if (maxH != null) sheet.behavior.maxHeight = maxH
+        sheet.behavior.state = BottomSheetBehavior.STATE_EXPANDED
+        sheet.behavior.skipCollapsed = true
+        RemoteControl.cover(sheet)
+        sheet.show()
+    }
+
+    /** 小窗顶栏：返回键常驻，渐变和片名跟控制栏一起出现（竖屏全屏、拖动时由别处管） */
+    private fun syncSmallTop(animate: Boolean = true) {
+        val show = controllerShown && !pipMode
+        findViewById<View?>(R.id.topScrim)?.let { fadeTo(it, show, animate = animate) }
+        findViewById<View?>(R.id.title)?.takeIf { findViewById<View?>(R.id.topScrim) != null }?.let { fadeTo(it, show, animate = animate) }
+    }
+
+    /**
+     * 起播前盖在小窗上的海报（暗、模糊）和转圈，第一帧出来后淡出，和腾讯视频、爱奇艺一样不让人对着黑屏等。
+     * 放进 PlayerView 的 overlay 层：在画面之上、控制栏之下，加载时点画面照样能拿出控制栏；拖进全屏时也跟着画面走。
+     */
+    private fun setupCover() {
+        if (findViewById<View?>(R.id.topScrim) == null || firstFrameShown || pic.isEmpty()) return // 只有手机竖屏小窗
+        val frame = playerView.overlayFrameLayout ?: return
+        val match = ViewGroup.LayoutParams.MATCH_PARENT
+        val cover = FrameLayout(this).apply {
+            id = R.id.cover
+            setBackgroundColor(Color.BLACK)
+            addView(ImageView(this@PlayActivity).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                alpha = 0.5f
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                load(pic)
+                if (Build.VERSION.SDK_INT >= 31) setRenderEffect(RenderEffect.createBlurEffect(40f, 40f, Shader.TileMode.CLAMP))
+            }, FrameLayout.LayoutParams(match, match))
+            addView(ProgressBar(this@PlayActivity).apply {
+                indeterminateTintList = ColorStateList.valueOf(Color.WHITE)
+            }, FrameLayout.LayoutParams(dp(36), dp(36), Gravity.CENTER))
+        }
+        frame.addView(cover, FrameLayout.LayoutParams(match, match))
+        syncCover(animate = false)
+    }
+
+    private fun isOnline(): Boolean {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        @Suppress("DEPRECATION") // activeNetwork 要 Android 6.0，兼容包在更老的系统上用旧接口
+        return if (Build.VERSION.SDK_INT >= 23) cm.activeNetwork != null else cm.activeNetworkInfo != null
+    }
+
+    /** 转圈下面的网速：挂在 PlayerView 的 overlay 层（起播封面之上、控制栏之下），换布局时跟着重建 */
+    private fun setupSpeedLabel() {
+        val frame = playerView.overlayFrameLayout ?: return
+        speedLabel = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = if (isTv) 16f else 12f
+            setShadowLayer(dp(4).toFloat(), 0f, 0f, 0x99000000.toInt())
+            visibility = View.GONE
+        }
+        frame.addView(speedLabel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER).apply {
+            topMargin = dp(if (isTv) 96 else 64) // 落在转圈下面
+        })
+        syncSpeed()
+    }
+
+    /**
+     * 缓冲（包括起播）时显示网速。[tick] 是每秒那一次：只有它采样，数字总是整整一秒收到的量；
+     * 状态刚变成缓冲时先写「正在缓冲」，下一秒再出数字。系统不给流量数据（-1）时一直只写「正在缓冲」。
+     */
+    private fun syncSpeed(tick: Boolean = false) {
+        if (tick) {
+            val rx = android.net.TrafficStats.getUidRxBytes(android.os.Process.myUid())
+            lastDelta = if (rx >= 0 && lastRx >= 0) rx - lastRx else -1L
+            lastRx = rx
+        }
+        val label = speedLabel ?: return
+        // 暂停时拖进度也会缓冲，但那时转圈不出来（when_playing），只剩一行网速反而奇怪
+        if (player?.playbackState != Player.STATE_BUFFERING || player?.playWhenReady != true || pipMode) {
+            label.visibility = View.GONE
+            label.tag = null
+            return
+        }
+        label.visibility = View.VISIBLE
+        if (label.tag == null) {
+            label.tag = true
+            label.text = "正在缓冲"
+        } else if (tick && lastDelta >= 0) {
+            label.text = if (lastDelta >= 1_048_576) String.format(Locale.ROOT, "%.1f MB/s", lastDelta / 1_048_576.0) else "${lastDelta / 1024} KB/s"
+        }
+    }
+
+    /** 起播前的海报封面：手机小窗、有海报、还没出过画面时才有 */
+    private fun syncCover(animate: Boolean = true) {
+        val cover = findViewById<View?>(R.id.cover) ?: return
+        fadeTo(cover, !firstFrameShown && pic.isNotEmpty() && !pipMode, animate = animate, gone = true)
+    }
+
+    private val dropCover = Runnable {
+        if (!firstFrameShown) {
+            firstFrameShown = true
+            syncCover()
+        }
+    }
+
+    /** 离线下载只给手机、平板上的点播（网盘和网络存储的文件本来就能直接看） */
+    private fun canDownload(): Boolean {
+        val fromDrive = items.any { it.sourceKey == Quark.SOURCE_KEY || it.sourceKey == QuarkWeb.SOURCE_KEY || it.sourceKey == NetStore.SOURCE_KEY }
+        return !isTv && !isLive && !replayMode && !fromDrive
     }
 
     /** TV: a full-height panel on the right; the picture stays visible on the left. Back closes it. */
@@ -2878,6 +3114,12 @@ class PlayActivity : BaseActivity() {
         findViewById<View?>(R.id.vOverlay)?.visibility = if (!inPip && vfullShown) View.VISIBLE else View.GONE
         if (!inPip) refreshLists()
         syncPullArrow()
+        if (!inPip) {
+            // 上面统一设成了可见：竖屏全屏时小窗的顶栏和下面那一栏应该是藏着的（顶栏现在压在画面上，露出来会多一个返回键）
+            if (vfullShown) listOf(R.id.topbar, R.id.content).forEach { findViewById<View?>(it)?.visibility = View.GONE }
+            syncSmallTop(animate = false)
+            syncCover(animate = false)
+        } else findViewById<View?>(R.id.cover)?.visibility = View.GONE
         playerView.useController = !inPip
         if (inPip) playerView.hideController()
     }

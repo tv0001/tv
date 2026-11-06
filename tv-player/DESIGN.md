@@ -56,11 +56,15 @@
 | 海报角标 | `bg_badge_muted`（来源数）、`bg_badge`（"新"） | 只有需要注意的信息才用蓝色 |
 | 遥控器焦点（海报、方块卡片） | `drawable/bg_focus.xml`、`zoomOnFocus()` | 2–3dp 蓝色描边并放大（电视 1.1 倍）。放大会超出自己的格子，所以所在的滚动区域要留出余量（内边距，纵向滚动再加 `fadingEdgeLength`），否则边缘被裁 |
 | 遥控器焦点（整行宽度的列表项，如直播频道） | `drawable/bg_focus_row.xml` | 不放大：一行放大一定会被列表左右边界裁掉。用行内圆角描边加淡底色，全部画在行里面 |
-| 侧边导航（电视、平板） | `bg_nav_panel.xml`、`nav_header.xml`、`Widget.TvPlayer.NavRail`、`bg_nav_item.xml`（遥控器焦点描边） | 导航放在自己的圆角面板上（`surface` 底），顶部是应用标记；选中项用浅蓝字加 `accent_container` 指示条，其余灰色 |
+| 侧边导航（电视、平板） | `bg_nav_panel.xml`、`nav_header.xml`、`Widget.TvPlayer.NavRail`、`bg_nav_item.xml`、`color/nav_item.xml`、`MainActivity.setupSideNav` | 导航放在自己的圆角面板上（`surface` 底），顶部是应用标记；选中项用浅蓝字加 `accent_container` 指示条，其余灰色。遥控器焦点项铺一层半透明浅色底（约 18% 白）、图标和字变白（实心白块太抢眼）；导航有焦点时收起指示条只留浅蓝字，焦点在内容区时整条导航压暗到 70% |
+| 电视海报片名 | `zoomOnFocus` | 片名放不下时聚焦后跑马灯滚动，离开恢复省略号 |
 | 切换动画 | `res/animator/fade_*.xml`、`res/anim/page_*.xml`、`Animation.TvPlayer.Page` | 只用透明度和 0.98→1 的轻微缩放，100–180 毫秒，不做位移或模糊动画，弱盒子上也不卡；系统的「动画缩放」关闭时自动失效 |
 | 电视首页 | `SearchFragment`（标签布局下第一页是「继续观看」；焦点在标签间移动即切页，从外面进标签行时回到选中的标签；点热播 / 历史搜索后焦点落到第一个结果） | 没有横幅，和手机一样按设置里的「热播推荐样式」走：默认「顶部标签」（分页标签 + 网格；电视上不放手机那行紧凑的继续观看，否则网格连一整行都放不下），可改「分组横滑」（继续观看、追剧更新、各榜单、高分推荐一行一行横滑）。网格在电视上留 12 / 16dp 内边距，聚焦放大的卡片才不会被标签行裁掉；海报用「遥控器焦点（海报、方块卡片）」那一行的样式 |
 | 输入框 | `Widget.Material3.TextInputLayout.OutlinedBox` | |
 | 手机横屏全屏、平板画面 | `layout-land/activity_play.xml`、`activity_play_tv.xml` 的 `landOverlay`（平板没有锁键和顶栏的投屏、设置，这两个在右侧面板里） | 参照腾讯视频 / B 站：顶栏（返回、片名 · 集名、时间电量、投屏、设置）压在 `bg_top_scrim` 渐变上；左边中间锁键；「倍速」「选集」插在 media3 底栏右侧，底栏自己的齿轮藏掉（和顶栏重复）。顶栏和锁键跟控制栏一起淡入淡出（160ms 透明度） |
+| 手机竖屏播放页 | `layout/activity_play.xml` | 参照腾讯视频 / 爱奇艺：小窗顶到状态栏，返回键常驻在画面左上（半透明圆底），片名和顶部渐变跟控制栏一起淡入淡出；小窗下面先是片名（18sp 粗）、评分 / 年份 / 类型 / 更新到哪、右边「简介 ›」（点这一块从下面弹出简介面板，只盖住小窗下面），再是播放状态、收藏 / 下载 / 投屏 / 设置、线路、选集（右边灰字「共 N 集」）；正在播的那一集名字前有跳动的音柱（`PlayingBars`，系统关动画时静止）；起播前小窗里是暗、模糊的海报加转圈，第一帧出来后淡出 |
+| 缓冲网速 | `PlayActivity.setupSpeedLabel` | 缓冲（含起播）时转圈下面写这一秒的网速（整个应用收到的字节），刚开始缓冲的第一秒写「正在缓冲」 |
+| 海报按压 | `zoomOnFocus` | 手指按下缩到 0.96，松开带一点回弹 |
 | 续播提示 | `PlayActivity.setupResumeTip` | 画面左下角深色胶囊，「从头播放」用强调色文字；控制栏出来时收起，免得压在进度条上 |
 | 海报进度条、占位 | `item_vod.xml` 的 `watched`、`progress_poster.xml`、`bg_poster_placeholder.xml` | 进度线 3dp 圆头，底轨半透明白、已看部分强调色，贴海报底边；没海报时深灰底加淡胶片图标 |
 | 下一集提示 | `view_next_episode.xml`（挂在 PlayerView 最上层，右上角） | 半透明卡片；手机带「立即播放 / 取消」按钮，电视只写「确认键立即播放 · 返回键取消」（按钮拿不到焦点）；电视控制栏打开时先藏起来 |

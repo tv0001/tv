@@ -1,9 +1,9 @@
 {
-  "versionCode": 36,
-  "versionName": "1.0.35",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.35-legacy.apk",
-  "sha256": "f49ceaf0489bea509c7d85e233c735cef9ef6fbf8d4f5053320d4c8dc5649994",
-  "size": 5042753,
-  "notes": "老电视兼容版（Android 5.0 起）：功能同 1.0.35，老系统上没有手机小窗和自动匹配帧率。",
+  "versionCode": 37,
+  "versionName": "1.0.36",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.36-legacy.apk",
+  "sha256": "7a248442611bd578436069de68d8bc94ac39acb3b07f4e3bd986d804bb8428bd",
+  "size": 5046849,
+  "notes": "老电视兼容版（Android 5.0 起）：功能同 1.0.36，老系统上没有手机小窗和自动匹配帧率。",
   "force": false
 }
