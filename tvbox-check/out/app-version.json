@@ -1,9 +1,9 @@
 {
-  "versionCode": 38,
-  "versionName": "1.0.37",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.37.apk",
-  "sha256": "8348f636db70807877b4d0123c82360d12cb9e911575d4da7606c6e8fb262161",
+  "versionCode": 39,
+  "versionName": "1.0.38",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.38.apk",
+  "sha256": "1507876dc8e341dce12d44935f3c1f6a650cc1169037ae8a9e2bce8248326704",
   "size": 4586206,
-  "notes": "电视：发现页横滑的一行里按右键，焦点不再每次跳到最左边，走出屏幕时才往前滚一格；「继续观看」里点一部片直接接着看（之前有时会变成按片名搜索），从播放页回来时这一页不再重新排序，焦点留在原来的卡片上。",
+  "notes": "电视首页「继续观看」更稳：刷新时卡片和观看记录一起更新，刚回来就点也能直接接着看；记录被清空后这一页会去掉。从右往左排版的系统语言下，横滑行的焦点不再跑出屏幕。",
   "force": false
 }

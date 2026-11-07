@@ -89,6 +89,8 @@ class FocusRowLayoutManager(context: Context) : androidx.recyclerview.widget.Lin
     override fun onLayoutChildren(recycler: RecyclerView.Recycler?, state: RecyclerView.State) {
         val before = focusedChild?.let { getDecoratedLeft(it) }
         super.onLayoutChildren(recycler, state)
+        // 从右往左的语言里这一行按右边缘排，按左边缘挪回去反而会把卡片推出屏幕：不管
+        if (layoutDirection == View.LAYOUT_DIRECTION_RTL) return
         val real = list?.width ?: 0
         if (before == null || real <= 0 || width == real || state.didStructureChange()) return
         val after = focusedChild?.let { getDecoratedLeft(it) } ?: return

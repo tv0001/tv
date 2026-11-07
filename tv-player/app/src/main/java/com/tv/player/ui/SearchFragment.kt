@@ -113,7 +113,13 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
             override fun onTabSelected(tab: TabLayout.Tab) {
                 // 切回「继续观看」：之前开着这一页时没重排的，现在按最新的观看时间排（这时它刚进屏幕，焦点在标签上）
                 if (tab.position == 0 && continueStale && tabSections.firstOrNull()?.title == CONTINUE) {
-                    continueSection()?.let { tabSections = listOf(it) + tabSections.drop(1) }
+                    val fresh = continueSection()
+                    if (fresh == null) {
+                        // 记录在这期间被清空了：这一页该整个去掉，留着旧卡片点了也打不开。等这次选中处理完再重排标签
+                        hotTabs.post { if (view != null) renderHot(hotSections) }
+                        return
+                    }
+                    tabSections = listOf(fresh) + tabSections.drop(1)
                 }
                 tabSections.getOrNull(tab.position)?.let {
                     hotAdapter.submitList(it.items) { hotGrid.scrollToPosition(0) }
@@ -524,11 +530,14 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
             val latest = Library.history(30).associateBy { it.key }
             val kept = watching.mapNotNull { latest[it.key] }
             if (kept.isNotEmpty()) {
-                watching = kept // 和显示的卡片一一对应：openHot 按位置找记录
-                continueStale = true
                 val section = Hot.Section(CONTINUE, kept.map(::continueItem))
-                tabSections = listOf(section) + tabSections.drop(1)
-                hotAdapter.submitList(section.items)
+                // 等新列表真正换上（后台比对完）再改记录：openHot 按卡片对象在 tabSections 里找位置、再按位置取 watching，
+                // 换上之前点到的还是旧卡片，旧的记录也得还在，才对得上
+                hotAdapter.submitList(section.items) {
+                    watching = kept
+                    continueStale = true
+                    tabSections = listOf(section) + tabSections.drop(1)
+                }
                 return
             }
         }
