@@ -1,9 +1,9 @@
 {
-  "versionCode": 37,
-  "versionName": "1.0.36",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.36.apk",
-  "sha256": "fa0484f6ac0cc17be8e306bb515fe30a73cb6f8a23f1f382c7a277466f8532b4",
+  "versionCode": 38,
+  "versionName": "1.0.37",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.37.apk",
+  "sha256": "8348f636db70807877b4d0123c82360d12cb9e911575d4da7606c6e8fb262161",
   "size": 4586206,
-  "notes": "手机竖屏播放页改成腾讯视频、爱奇艺的样子：画面顶到状态栏，下面有片名、评分年份和简介，多了「下载」，正在播的那一集有跳动标记，起播前先显示海报。缓冲时显示网速；播放中途卡住 15 秒、有测速流畅的线路时自动换过去。电视：片名太长时选中后滚动显示，左侧导航焦点更柔和。",
+  "notes": "电视：发现页横滑的一行里按右键，焦点不再每次跳到最左边，走出屏幕时才往前滚一格；「继续观看」里点一部片直接接着看（之前有时会变成按片名搜索），从播放页回来时这一页不再重新排序，焦点留在原来的卡片上。",
   "force": false
 }

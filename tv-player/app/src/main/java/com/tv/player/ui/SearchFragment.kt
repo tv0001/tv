@@ -111,6 +111,10 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         hotGrid.adapter = hotAdapter
         hotTabs.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
             override fun onTabSelected(tab: TabLayout.Tab) {
+                // 切回「继续观看」：之前开着这一页时没重排的，现在按最新的观看时间排（这时它刚进屏幕，焦点在标签上）
+                if (tab.position == 0 && continueStale && tabSections.firstOrNull()?.title == CONTINUE) {
+                    continueSection()?.let { tabSections = listOf(it) + tabSections.drop(1) }
+                }
                 tabSections.getOrNull(tab.position)?.let {
                     hotAdapter.submitList(it.items) { hotGrid.scrollToPosition(0) }
                 }
@@ -434,7 +438,7 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         }
         val list = row.findViewById<RecyclerView>(R.id.sectionList)
         list.isFocusable = false // see the results list above: only the cards take the focus
-        list.layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
+        list.layoutManager = FocusRowLayoutManager(requireContext())
         list.adapter = HotAdapter(onClick).also { it.submitList(items) }
         hotRowsList.addView(row)
     }
@@ -495,14 +499,39 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
     private fun continueSection(): Hot.Section? {
         if (!requireContext().isTv()) return null
         watching = Library.history(30)
+        continueStale = false
         if (watching.isEmpty()) return null
-        return Hot.Section(CONTINUE, watching.map { Hot.Item(it.title, it.pic, 0.0, if (it.epName.isNotEmpty()) "看到 ${it.epName}" else "", progress = it.progress) })
+        return Hot.Section(CONTINUE, watching.map(::continueItem))
     }
 
-    /** 从播放页回来：「继续观看」这一页按最新的记录更新，焦点和别的分页不动 */
+    private fun continueItem(h: Library.Entry) =
+        Hot.Item(h.title, h.pic, 0.0, if (h.epName.isNotEmpty()) "看到 ${h.epName}" else "", progress = h.progress)
+
+    /** 「继续观看」页正开着时只就地更新过、还没按最新的观看时间重排：切到别的标签再切回来时重排 */
+    private var continueStale = false
+
+    /**
+     * 从播放页回来：更新「继续观看」这一页，别的分页不动。
+     * 这一页正开着时顺序不动，只就地更新每张卡片的进度：按最新的观看时间重排会把刚看的那部挪到第一个，
+     * 列表按片名认条目，焦点跟着那张卡片一起跑到最左上角。新的顺序（和新看的片子）等切到别的标签、
+     * 别的页面再回来时才排上（[continueStale]），那时这一页不在屏幕上。
+     */
     private fun refreshContinueTab() {
         if (!requireContext().isTv() || Store.hotLayout() == "rows" || hotSections.isEmpty() || searching) return
         val had = tabSections.firstOrNull()?.title == CONTINUE
+        val showing = had && hotTabs.selectedTabPosition == 0 && hotGrid.visibility == View.VISIBLE
+        if (showing) {
+            val latest = Library.history(30).associateBy { it.key }
+            val kept = watching.mapNotNull { latest[it.key] }
+            if (kept.isNotEmpty()) {
+                watching = kept // 和显示的卡片一一对应：openHot 按位置找记录
+                continueStale = true
+                val section = Hot.Section(CONTINUE, kept.map(::continueItem))
+                tabSections = listOf(section) + tabSections.drop(1)
+                hotAdapter.submitList(section.items)
+                return
+            }
+        }
         val section = continueSection()
         if ((section != null) != had) {
             renderHot(hotSections)

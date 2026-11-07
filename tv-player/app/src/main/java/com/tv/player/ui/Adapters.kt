@@ -65,6 +65,37 @@ fun Context.posterDp(): Int = if (isTv()) 170 else if (isTablet()) 140 else 108
 fun Context.gridSpan(minSpan: Int = 3): Int =
     maxOf(minSpan, (resources.displayMetrics.widthPixels / resources.displayMetrics.density / posterDp()).toInt())
 
+/**
+ * 横着滑的一行海报（电视上用遥控器左右移焦点）。焦点卡片走出屏幕时才滚，而且只滚到它刚好露出来（RecyclerView 默认的做法）。
+ *
+ * 这一行的高度是 wrap_content，外面几层 LinearLayout / NestedScrollView 量尺寸时会拿不是真实宽度的尺寸（实测有 174px、
+ * 1032px 不限宽）让它先排一遍。在那么窄的范围里，焦点卡片为了露出来被挪到行首；真正排版时又沿用了这个位置，
+ * 看起来就是每按一下右键，整行都把焦点卡片对齐到最左边（1.0.35 及以前都这样）。所以宽度不是真实宽度的那几遍，
+ * 排完把卡片挪回原位。
+ */
+class FocusRowLayoutManager(context: Context) : androidx.recyclerview.widget.LinearLayoutManager(context, HORIZONTAL, false) {
+    private var list: RecyclerView? = null
+
+    override fun onAttachedToWindow(view: RecyclerView) {
+        super.onAttachedToWindow(view)
+        list = view
+    }
+
+    override fun onDetachedFromWindow(view: RecyclerView, recycler: RecyclerView.Recycler) {
+        super.onDetachedFromWindow(view, recycler)
+        list = null
+    }
+
+    override fun onLayoutChildren(recycler: RecyclerView.Recycler?, state: RecyclerView.State) {
+        val before = focusedChild?.let { getDecoratedLeft(it) }
+        super.onLayoutChildren(recycler, state)
+        val real = list?.width ?: 0
+        if (before == null || real <= 0 || width == real || state.didStructureChange()) return
+        val after = focusedChild?.let { getDecoratedLeft(it) } ?: return
+        if (after != before) offsetChildrenHorizontal(before - after)
+    }
+}
+
 /** Remote-control focus feedback: the focused card grows a little. */
 fun View.zoomOnFocus(scale: Float = 1.06f) {
     setOnFocusChangeListener { v, focused ->
@@ -184,7 +215,12 @@ class HotAdapter(
         h.subtitle.visibility = if (year.isEmpty()) View.GONE else View.VISIBLE
         // On TV the focused card grows more, so it stands out from the row.
         h.itemView.zoomOnFocus(if (h.itemView.context.isTv()) 1.1f else 1.06f)
-        h.itemView.setOnClickListener { onClick(item) }
+        // 点的时候再按位置取：列表换成内容相同的新对象时（从播放页回来刷新「继续观看」）卡片不会重新绑定，
+        // 绑定时记下的旧对象和列表里的对不上，按对象找观看记录会落空、退成按片名搜索
+        h.itemView.setOnClickListener {
+            val pos = h.bindingAdapterPosition
+            if (pos != RecyclerView.NO_POSITION) onClick(getItem(pos))
+        }
     }
 
     private object Diff : DiffUtil.ItemCallback<Hot.Item>() {
