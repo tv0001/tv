@@ -105,6 +105,8 @@ class SearchFragment : Fragment(R.layout.fragment_search) {
         hotGrid = view.findViewById(R.id.hotGrid)
         hotRows = view.findViewById(R.id.hotRows)
         if (requireContext().isTv()) hotRows.titleGap = requireContext().dp(20)
+        // 上下渐隐只给 TV 用；手机上滚动时会在列表顶部压出一条黑影
+        else hotRows.isVerticalFadingEdgeEnabled = false
         hotRowsList = view.findViewById(R.id.hotRowsList)
         hotAdapter = HotAdapter(::openHot, grid = true)
         hotGrid.layoutManager = GridLayoutManager(requireContext(), requireContext().gridSpan())

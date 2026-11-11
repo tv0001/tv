@@ -1,9 +1,9 @@
 {
-  "versionCode": 39,
-  "versionName": "1.0.38",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.38.apk",
-  "sha256": "1507876dc8e341dce12d44935f3c1f6a650cc1169037ae8a9e2bce8248326704",
+  "versionCode": 40,
+  "versionName": "1.0.39",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.39.apk",
+  "sha256": "0a304f3aa43ebe35bcdc77a5c00bb6f13eeef63a47580c44a44cc5221e128c38",
   "size": 4586206,
-  "notes": "电视首页「继续观看」更稳：刷新时卡片和观看记录一起更新，刚回来就点也能直接接着看；记录被清空后这一页会去掉。从右往左排版的系统语言下，横滑行的焦点不再跑出屏幕。",
+  "notes": "手机首页：上下滑动时，列表顶部不再出现一条黑色阴影。",
   "force": false
 }
