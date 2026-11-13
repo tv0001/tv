@@ -61,6 +61,27 @@ object Store {
 
     fun saveCms(text: String) = prefs.edit().putString("cms", text).apply()
 
+    /**
+     * 点播先试哪个源：cms.json 是 tvbox-check/cms_sources.py 按实测播放速度排好的（快的在前），按主机名取名次；
+     * 自己添加的源排最前；cms.json 里没有的（没测过）排在测过能放的后面、实测放不出来的（`play` 为 0）前面。
+     * 返回的函数按 `VodItem.sourceKey` 查。
+     */
+    fun playRanks(): (String) -> Int {
+        val custom = customSites().map { it.key }.toSet()
+        val rank = HashMap<String, Int>()
+        runCatching {
+            val sites = JSONObject(prefs.getString("cms", null) ?: asset("cms.json")).optJSONArray("sites") ?: JSONArray()
+            for (i in 0 until sites.length()) {
+                val o = sites.optJSONObject(i) ?: continue
+                val dead = o.has("play") && !o.isNull("play") && o.optDouble("play", 1.0) <= 0.0
+                rank.putIfAbsent(authority(o.optString("api").trim()), if (dead) UNTESTED_RANK + 1 + i else i)
+            }
+        }
+        return { key -> if (key in custom) -1 else rank[authority(key)] ?: UNTESTED_RANK }
+    }
+
+    private const val UNTESTED_RANK = 1_000_000
+
     private val bundledConfig by lazy { asset("best.json") }
 
     /** 订阅里的 m3u8 去广告规则（见 AdFilter）。 */

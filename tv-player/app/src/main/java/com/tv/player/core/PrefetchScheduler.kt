@@ -17,6 +17,10 @@ import java.util.concurrent.Executor
  *    and so does finding that the extra connections gain nothing (what they fetch comes in at well under the speed the
  *    player's own connection had: the line shares one speed between them, or serves them all over one connection);
  *  - only what [CachePolicy] allows, and only for the source being played ([allowed]), never for what is loaded ahead of it.
+ *
+ * 空闲预缓存（[setIdle]）：暂停时，或者播放器的缓冲已经满了、网络闲着，用一个连接把它读到的位置后面最多若干秒的分片
+ * 顺序下载进磁盘缓存，不看线路快慢。不算进上面「多连接有没有用」的判断；播放器往回拖时，落到它后面的取消；
+ * 一个主机拒绝或超时，这次播放就不再给它做空闲预缓存。
  */
 class PrefetchScheduler(
     private val fetcher: Fetcher,
@@ -120,6 +124,13 @@ class PrefetchScheduler(
     private var lastLowEndedNs = 0L
     private var closed = false
 
+    // 空闲预缓存：播放器最后打开的分片（它读到哪了）、排着的和正在下的、出过错的主机
+    private var lastLoc: Loc? = null
+    private var idleSeconds = 0.0
+    private val idleQueue = ArrayDeque<String>()
+    private val idleUrls = HashSet<String>()
+    private val idleBlocked = HashSet<String>()
+
     /** Real time per second of download, as the player's own downloads showed it (null: not known yet). */
     val speedRatio: Double? get() = synchronized(lock) { ratio }
 
@@ -158,7 +169,11 @@ class PrefetchScheduler(
             }
             playerBusy += url
             if (running.isNotEmpty()) contended += url
-            if (on) prune(url)
+            if (on) {
+                // 只跟正在播的那条流：预加载下一集也走这里，它的分片不能当成播放器读到的位置
+                lastLoc = locs[url]
+                prune(url)
+            }
             return mode
         }
     }
@@ -195,11 +210,38 @@ class PrefetchScheduler(
         }
     }
 
+    /**
+     * 播放器空闲（暂停，或缓冲已满）时 [seconds] > 0：把它读到的位置后面这么多秒的分片下进缓存；0 停下（它又要用网了），
+     * 正在下的那个取消。[allowedNow]：调用方算好的 [allowed]（它可能要拿调用方的锁，不在这里的锁里调）。
+     */
+    fun setIdle(seconds: Double, allowedNow: Boolean) = synchronized(lock) {
+        if (closed) return@synchronized
+        val on = seconds > 0 && allowedNow
+        if (!on) {
+            if (idleSeconds > 0) {
+                idleQueue.clear()
+                running.forEach { if (it.key in idleUrls) it.value.cancel() }
+            }
+            idleSeconds = 0.0
+            return@synchronized
+        }
+        idleSeconds = seconds
+        fillIdle()
+        pump()
+    }
+
+    /** 空闲预缓存现在排着和正在下的分片数（日志和测试用）。 */
+    val idlePending: Int get() = synchronized(lock) { idleQueue.size + running.keys.count { it in idleUrls } }
+
     /** What the player plays has changed (another episode, another line, stopped): what was fetched ahead goes at once. */
     fun reset() = synchronized(lock) {
         queue.clear()
+        idleQueue.clear()
         running.values.forEach { it.cancel() }
         activeRoot = null
+        lastLoc = null
+        idleSeconds = 0.0
+        idleBlocked.clear()
         contended.clear()
         forgetSpeed()
     }
@@ -208,6 +250,7 @@ class PrefetchScheduler(
     fun release() = synchronized(lock) {
         closed = true
         queue.clear()
+        idleQueue.clear()
         running.values.forEach { it.cancel() }
     }
 
@@ -219,13 +262,35 @@ class PrefetchScheduler(
             // A different stream is playing now (another episode, another line): what was fetched ahead for the old one goes.
             running.forEach { if (it.key != url) it.value.cancel() }
             queue.clear()
+            idleQueue.clear()
             forgetSpeed()
             activeRoot = loc.root
         }
         val want = ahead(loc)
         // Not ahead of the player any more (it moved on, or jumped): dropped. The one it is on is left to finish.
         queue.removeAll { it !in want }
-        running.forEach { if (it.key != url && it.key !in want) it.value.cancel() }
+        // 空闲预缓存下的是更后面的：还在播放器前面的留着，落到它后面的（往回拖、往前跳过了头）才取消
+        val behind = { u: String -> locs[u]?.let { it.list !== loc.list || it.index <= loc.index } ?: true }
+        idleQueue.removeAll { behind(it) }
+        running.forEach { if (it.key != url && it.key !in want && (it.key !in idleUrls || behind(it.key))) it.value.cancel() }
+    }
+
+    // Lock held. 从播放器读到的位置往后排空闲预缓存，排满 idleSeconds 为止（已经在缓存里的不排、但算进时长）
+    private fun fillIdle() {
+        val loc = lastLoc ?: return
+        idleQueue.clear()
+        if (loc.root != activeRoot) return
+        var sum = 0.0
+        var i = loc.index + 1
+        while (i < loc.list.size && sum < idleSeconds) {
+            val seg = loc.list[i]
+            sum += seg.seconds.coerceAtLeast(0.0)
+            i++
+            val u = seg.url
+            if (u in running || u in queue || u in playerBusy || u in failedFiles || exclude(u) || !cacheable(u)) continue
+            if (FallbackLatch.hostOf(u) in idleBlocked || fetcher.isCached(u)) continue
+            idleQueue.addLast(u)
+        }
     }
 
     // Called with the lock held. Queues and starts what is missing ahead of the player at [url].
@@ -257,16 +322,26 @@ class PrefetchScheduler(
 
     // Called with the lock held.
     private fun pump() {
-        while (!closed && running.size < maxConcurrent && queue.isNotEmpty()) {
-            val url = queue.removeFirst()
-            val token = CancelToken()
-            running[url] = token
-            contended += playerBusy
-            try {
-                executor.execute { run(url, token) }
-            } catch (e: Exception) {
-                running.remove(url)
-            }
+        while (!closed && running.size < maxConcurrent && queue.isNotEmpty()) start(queue.removeFirst())
+        // 空闲预缓存只用一个连接，而且只在没有别的预取在跑时
+        while (!closed && idleSeconds > 0 && running.isEmpty() && idleQueue.isNotEmpty()) {
+            val url = idleQueue.removeFirst()
+            if (url in playerBusy || fetcher.isCached(url)) continue
+            idleUrls += url
+            start(url)
+        }
+    }
+
+    // Lock held.
+    private fun start(url: String) {
+        val token = CancelToken()
+        running[url] = token
+        contended += playerBusy
+        try {
+            executor.execute { run(url, token) }
+        } catch (e: Exception) {
+            running.remove(url)
+            idleUrls -= url
         }
     }
 
@@ -287,6 +362,21 @@ class PrefetchScheduler(
         val elapsedMs = (t1 - t0) / 1_000_000
         synchronized(lock) {
             running.remove(url)
+            if (idleUrls.remove(url)) {
+                // 空闲预缓存：不算进多连接的判断；主机拒绝或超时，这次播放就不再给这个主机做，单个文件坏了只跳过它
+                if (outcome is Outcome.Failed && !token.cancelled) {
+                    if (outcome.hostWide) {
+                        val host = FallbackLatch.hostOf(url)
+                        log("idle caching stopped for $host: ${outcome.reason}")
+                        host?.let { idleBlocked += it }
+                        idleQueue.removeAll { FallbackLatch.hostOf(it) == host }
+                    } else {
+                        failedFiles += url
+                    }
+                }
+                pump()
+                return@synchronized
+            }
             if (outcome is Outcome.Fetched && !token.cancelled) judgeGain(url, outcome.bytes, elapsedMs, t0, t1)
             // Cancelled on purpose (a seek): whatever the fetch ended with is no failure of the host.
             if (outcome is Outcome.Failed && !token.cancelled) {

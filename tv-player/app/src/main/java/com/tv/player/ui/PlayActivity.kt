@@ -109,6 +109,7 @@ import com.tv.player.R
 import com.tv.player.core.Cms
 import com.tv.player.core.CatchupUrl
 import com.tv.player.core.Dlna
+import com.tv.player.core.EpisodeMatch
 import com.tv.player.core.Epg
 import com.tv.player.core.DlnaDevice
 import com.tv.player.core.Http
@@ -163,6 +164,13 @@ class PlayActivity : BaseActivity() {
     companion object {
         private const val STALL_MS = 20_000L
         private const val MID_STALL_MS = 15_000L // 播放中途连续缓冲这么久（没报错、只是不来数据），有别的线路就换过去
+        private const val LIVE_STALL_PROBE_MS = 3_000L // 直播中途缓冲这么久，开始测其它线路
+        private const val LIVE_MID_STALL_MS = 8_000L // 直播没有缓冲余量可保，卡这么久就换到测出来流畅的线路
+        private const val MID_STALL_AGAIN_MS = 120_000L // 因为中途卡住换过线之后，过这么久才允许再换
+        private const val LIVE_PROBE_FRESH_MS = 20_000L // 直播换线只认这么久之内现测的结果
+        private const val REPEAT_WINDOW_MS = 180_000L // 点播这么久之内
+        private const val REPEAT_STALLS = 2 // 已经卡过这么多次，
+        private const val REPEAT_STALL_MS = 3_000L // 再卡这么久就换到测过流畅的线路
         private const val TALL_BOX = 0.5f // 竖屏视频的小窗最高占页面的这么多
         private const val FLICK_DP = 1000 // 每秒这么多 dp 以上算「甩」
         private const val NEXT_CARD_MAX_MS = 6_000L // 下一集的卡片最多盖这么久
@@ -170,6 +178,10 @@ class PlayActivity : BaseActivity() {
         private const val RETRY_WINDOW_MS = 60_000L // 原线路重试过后这么久之内又出错，就换线
         private const val DROP_LOG_MS = 60_000L // 掉帧最多这么久记一条
         private const val MAX_BUFFER_MS = 50_000
+        private const val IDLE_TICK_MS = 2_000L // 多久看一次能不能做空闲预缓存
+        private const val IDLE_AHEAD_S = 600.0 // 暂停时往后缓存这么多秒（10 分钟）
+        private const val IDLE_AHEAD_PLAYING_S = 300.0 // 边播边缓存（缓冲已满）时往后这么多秒：看一会儿就走的话少白下
+        private const val IDLE_BUFFER_SLACK_MS = 5_000 // 缓冲离上限不到这么多，算网络闲着
         private const val SAVE_MS = 10_000L
         private const val RESUME_TIP_MIN_MS = 10_000L // 续播位置不到这么多就不提示「已从 xx:xx 继续播放」
         private const val RESUME_TIP_MS = 6_000L // 续播提示停留这么久
@@ -212,7 +224,8 @@ class PlayActivity : BaseActivity() {
         )
     }
 
-    private class Cand(val url: String, val label: String, val src: Int = -1, val line: Int = -1)
+    /** [ep]：这条线路里同一个视频的位置（各源分集方式不同，不一定是 curEp）；-1 表示不换集 */
+    private class Cand(val url: String, val label: String, val src: Int = -1, val line: Int = -1, val ep: Int = -1)
 
     private var isLive = false
     private var title = ""
@@ -406,37 +419,112 @@ class PlayActivity : BaseActivity() {
      * 播放中途卡住、又没报错（服务器只是不怎么来数据）：以前会一直转圈。连续缓冲 [MID_STALL_MS] 还没缓过来，
      * 而下一条线路测速是流畅的（后台测速的结果，和起播慢时的 [rescue] 同一个判断），就从当前位置换过去。
      * 没有测过是流畅的线路时不换：可能是自家网络慢，挨个换线只会每条都重新缓冲，最后全判失败、播放停掉。
-     * 每集最多换一次，免得网络整体变慢时来回跳；换过去的那条要是起不来，回到原来那条（见 [failOver]），
+     * 换过一次之后 [MID_STALL_AGAIN_MS] 内不再换，免得网络整体变慢时来回跳；换过去的那条要是起不来，回到原来那条（见 [failOver]），
      * 不接着往下换到「全部失败」。手动选过线路、选线方式是「按顺序」、看回看时都不自动换（和 [rescue] 一样）。
+     *
+     * 直播不一样：起播顺利时不做后台测速（[backgroundProbe] 只管点播），以前直播中途卡住时手里没有测速结果，
+     * 这里永远不换。现在直播卡 [LIVE_STALL_PROBE_MS] 就现测其它线路（见 [liveStallProbe]），卡满
+     * [LIVE_MID_STALL_MS] 换到测出来流畅的一条；测速还没出结果就每秒再看一次。直播没有进度要保，
+     * 一条线路能好一阵坏一阵，以前试过的线路也可以换回去（点播不换回试过的）。
+     *
+     * 点播反复小卡（每次几秒、不到 [MID_STALL_MS]）以前永远不换线：最近 [REPEAT_WINDOW_MS] 里已经卡过
+     * [REPEAT_STALLS] 次，这次卡 [REPEAT_STALL_MS] 就按上面的条件换。
      */
-    private val midStall = Runnable {
+    private val midStall: Runnable = Runnable {
         val p = player ?: return@Runnable
-        if (!started || allFailed || midStallSwitched || replayMode || pinned || !smartOn()) return@Runnable
+        val switchedRecently = midStallSwitched && SystemClock.elapsedRealtime() - midStallAt < MID_STALL_AGAIN_MS
+        if (!started || allFailed || switchedRecently || replayMode || pinned || !smartOn()) return@Runnable
         if (p.playbackState != Player.STATE_BUFFERING || !p.playWhenReady || !isOnline()) return@Runnable
-        val best = (if (isLive) rank(rawCandidates()) else candidatesAt(curEp)).firstOrNull { it.url !in tried } ?: return@Runnable
-        if (probes[best.url]?.smooth != true) return@Runnable
         val from = current ?: return@Runnable
+        val best = if (isLive) {
+            // 只信这次卡住时现测的结果：没测（比如那会儿断网）时 probes 里可能是很久以前起播时留下的
+            if (SystemClock.elapsedRealtime() - liveProbedAt > LIVE_PROBE_FRESH_MS) return@Runnable
+            rank(rawCandidates()).firstOrNull { it.url != from.url && probes[it.url]?.smooth == true }
+        } else {
+            candidatesAt(curEp).firstOrNull { it.url !in tried }?.takeIf { probes[it.url]?.smooth == true }
+        }
+        if (best == null) {
+            if (isLive && probeJobs.any { it.isActive }) handler.postDelayed(midStall, 1_000)
+            return@Runnable
+        }
+        // 直播：试过的线路这会儿测出来流畅，也让 nextCandidate 能挑到它（它排在所有没测过 / 不流畅的前面）
+        if (isLive) tried.remove(best.url)
         midStallSwitched = true
-        midStallBack = from to resolvedUrl
+        midStallAt = SystemClock.elapsedRealtime()
+        // 记下当时的集数：换过去的线路会改 curEp，起不来退回这条时要改回来（续播起步的线路没带集数）
+        midStallBack = Cand(from.url, from.label, from.src, from.line, if (isLive) -1 else curEp) to resolvedUrl
         Log.d("TVP", "mid-play stall on ${from.label}, switching to ${best.label}")
         flashHud("这条线路卡住了，换到更流畅的一条", 2_500)
         failOver()
     }
     private var midStallSwitched = false // 这一集已经因为中途卡住换过一次线
+    private var midStallAt = 0L // 上次因为中途卡住换线的时间（隔 MID_STALL_AGAIN_MS 可以再换）
+    private var liveProbedAt = 0L // 直播上次因为卡住开始现测其它线路的时间
+    private val recentStalls = ArrayDeque<Long>() // 点播这条线路最近几次中途卡住的时间，换线时清空
+    private var bufferingSince = 0L // 这一次进入缓冲的时间
     /** 因为中途卡住换走的那条线路（和它解析好的地址）：换过去的起不来就回到它；新线路放起来后清掉 */
     private var midStallBack: Pair<Cand, String?>? = null
+
+    /**
+     * 直播中途卡了一会儿：把其它线路重新测一遍（以前的结果可能是很久以前测的，先丢掉），给 [midStall] 挑。
+     * 正在卡的那条不测，免得和它抢网速；缓过来时 READY 会取消还没测完的。
+     */
+    private val liveStallProbe = Runnable {
+        val p = player ?: return@Runnable
+        if (!isLive || !started || replayMode || pinned || !smartOn()) return@Runnable
+        if (p.playbackState != Player.STATE_BUFFERING || !p.playWhenReady || !isOnline()) return@Runnable
+        if (midStallSwitched && SystemClock.elapsedRealtime() - midStallAt < MID_STALL_AGAIN_MS) return@Runnable
+        if (probeJobs.any { it.isActive }) return@Runnable
+        Log.d("TVP", "live stall on ${current?.label}, testing the other lines")
+        liveProbedAt = SystemClock.elapsedRealtime()
+        lifecycleScope.launch { warmUp(background = true, refresh = true) }
+    }
 
     /** 缓冲中途暂停 / 继续也要重新计时：只在想播的时候卡着才算 */
     private fun armMidStall() {
         handler.removeCallbacks(midStall)
+        handler.removeCallbacks(liveStallProbe)
         val p = player ?: return
-        if (p.playbackState == Player.STATE_BUFFERING && started && p.playWhenReady) handler.postDelayed(midStall, MID_STALL_MS)
+        if (p.playbackState == Player.STATE_BUFFERING && started && p.playWhenReady) {
+            val now = SystemClock.elapsedRealtime()
+            // 点播：最近已经反复卡过（不算刚拖完进度的缓冲），这次不等满 MID_STALL_MS
+            // 只算这次缓冲开始之前的（这次的卡顿在缓冲开始后才记上；缓冲中途暂停再继续也会走到这里）
+            val repeated = !isLive && now - lastSeekAt > 1_500 &&
+                recentStalls.count { it < bufferingSince && now - it < REPEAT_WINDOW_MS } >= REPEAT_STALLS
+            handler.postDelayed(midStall, if (isLive) LIVE_MID_STALL_MS else if (repeated) REPEAT_STALL_MS else MID_STALL_MS)
+            if (isLive) handler.postDelayed(liveStallProbe, LIVE_STALL_PROBE_MS)
+        }
     }
 
     // 缓冲时转圈下面的网速（整个应用这一秒收了多少字节，和主流 App 的「xx KB/s」一样）
     private var speedLabel: TextView? = null
     private var lastRx = -1L
     private var lastDelta = -1L
+    /**
+     * 空闲预缓存（见 [PrefetchScheduler.setIdle]）：点播 m3u8 暂停着（往后 [IDLE_AHEAD_S] 秒），或者播放器缓冲已满、
+     * 网络闲着（往后 [IDLE_AHEAD_PLAYING_S] 秒）时，下进磁盘缓存；一开始缓冲（播放器要用网）就停。
+     * 计费网络、关了多连接预取、后台测速正在跑时不做。
+     */
+    private var idleCaching = false
+    private val idleCacheTick = object : Runnable {
+        override fun run() {
+            handler.postDelayed(this, IDLE_TICK_MS)
+            val p = player ?: return
+            val sched = prefetch ?: return
+            val root = prefetchRoot
+            val hls = root != null && root.contains(".m3u8", ignoreCase = true)
+            val idle = hls && !isLive && !replayMode && started && p.playbackState == Player.STATE_READY &&
+                (!p.playWhenReady || p.totalBufferedDuration >= MAX_BUFFER_MS - IDLE_BUFFER_SLACK_MS)
+            // 计费网络一律不做（选线方式「始终测速」只同意了测速用流量）；后台测速时让开，免得测出来偏慢
+            val metered = (getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).isActiveNetworkMetered
+            val on = idle && !metered && prefetchOn() && probeJobs.none { it.isActive }
+            sched.setIdle(if (!on) 0.0 else if (p.playWhenReady) IDLE_AHEAD_PLAYING_S else IDLE_AHEAD_S, on)
+            if (on != idleCaching) {
+                idleCaching = on
+                Log.d("TVP", if (on) "idle caching on: ${sched.idlePending} segments to fetch" else "idle caching off")
+            }
+        }
+    }
     private val saver = object : Runnable {
         override fun run() {
             saveProgress()
@@ -548,7 +636,10 @@ class PlayActivity : BaseActivity() {
         } else {
             key = intent.getStringExtra("key").orEmpty()
             pic = intent.getStringExtra("pic").orEmpty()
-            items = vodItemsFromJson(intent.getStringExtra("items") ?: "[]")
+            // 同一部片子的各个源原来按搜索谁先返回排，和片子放得快不快无关：按实测播放速度重排（排序稳定，名次相同的保持原样）。
+            // 上次能播的源仍然最先试（initVod / quickResume 按 sourceKey 找，不看位置）
+            val playRank = Store.playRanks()
+            items = vodItemsFromJson(intent.getStringExtra("items") ?: "[]").sortedBy { playRank(it.sourceKey) }
         }
 
         // 走 OkHttp：和测速、解析共用连接池（测速时连上的服务器直接复用连接）、解析缓存和 IPv4 优先，
@@ -1529,12 +1620,15 @@ class PlayActivity : BaseActivity() {
         }
 
         override fun onPlaybackStateChanged(state: Int) {
+            if (state == Player.STATE_BUFFERING) bufferingSince = SystemClock.elapsedRealtime()
             updateKeepScreen()
             armMidStall()
             syncSpeed()
             // Buffering in the middle of playing, not after a seek or at the start, is a stall.
             if (state == Player.STATE_BUFFERING && started && !isLive && player?.playWhenReady == true && SystemClock.elapsedRealtime() - lastSeekAt > 1_500) {
                 stallPolicy.onStall()
+                recentStalls.addLast(SystemClock.elapsedRealtime())
+                while (recentStalls.size > 10) recentStalls.removeFirst()
                 stalledThisEpisode = true
                 Log.d("TVP", "stall ${stallPolicy.stalls}: ${stallPolicy.resumeMs()} ms are buffered before playing on")
                 noteStall()
@@ -1898,6 +1992,7 @@ class PlayActivity : BaseActivity() {
             tried.remove(back.first.url)
             if (back.first.src >= 0) curSrc = back.first.src
             if (back.first.line >= 0) curLine = back.first.line
+            if (!isLive && back.first.ep >= 0) curEp = back.first.ep
             quickFirst = back
             refreshLists()
             Log.d("TVP", "the line switched to after a stall did not start, back to ${back.first.label}")
@@ -1915,10 +2010,12 @@ class PlayActivity : BaseActivity() {
         preloadJob?.cancel()
         handler.removeCallbacks(preloadNext)
         stalledThisEpisode = false
+        recentStalls.clear() // 新线路重新算反复卡顿
         retriedAt = 0L // 新线路有自己的一次原地重试
         handler.removeCallbacks(retryNow)
         handler.removeCallbacks(stall)
         handler.removeCallbacks(midStall)
+        handler.removeCallbacks(liveStallProbe)
         // 控制栏这时没出来就别让它自己弹出来；用户正开着的（比如刚点了下一集）照常按超时收起
         if (!controllerShown) setQuietControls(true)
         player?.stop()
@@ -1991,6 +2088,7 @@ class PlayActivity : BaseActivity() {
                 tried += it.url
                 curSrc = it.src
                 curLine = it.line
+                if (it.ep >= 0) curEp = it.ep // 换到的线路里这一集的位置
                 refreshLists()
                 return it
             }
@@ -2048,7 +2146,7 @@ class PlayActivity : BaseActivity() {
      * Tests the candidate lines in parallel. Waits for all of them, but leaves early once a smooth line is known
      * (after 1.5 s) and never longer than 4 s; slow ones keep going in the background and still feed the ranking.
      */
-    private suspend fun warmUp(background: Boolean = false) {
+    private suspend fun warmUp(background: Boolean = false, refresh: Boolean = false) {
         if (!smartOn() || pinned) return
         if (!isLive) {
             // A wider choice: bring in the lines of up to two more sources, in parallel.
@@ -2062,8 +2160,13 @@ class PlayActivity : BaseActivity() {
         // A slow-start rescue that is no longer needed: the line started while the details were loading.
         if (!background && started) return
         val cap = minOf(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
-        val fresh = rawCandidates().filter { it.url !in probes }.take(6)
-        if (fresh.size < 2) return
+        // refresh（直播中途卡住）：除了正在卡的那条，旧结果全丢掉重测，没测到的不能顶着旧的「流畅」被挑中
+        val fresh = if (refresh) {
+            rawCandidates().filter { it.url != current?.url }.onEach { probes.remove(it.url) }.take(6)
+        } else {
+            rawCandidates().filter { it.url !in probes }.take(6)
+        }
+        if (fresh.size < (if (refresh) 1 else 2)) return
         probeJobs.forEach { it.cancel() }
         val jobs = fresh.map { c ->
             lifecycleScope.launch {
@@ -2132,15 +2235,22 @@ class PlayActivity : BaseActivity() {
     private fun directLine(d: VodDetail): Int =
         d.lines.indexOfFirst { l -> l.episodes.firstOrNull()?.url?.let { DIRECT.containsMatchIn(it) } == true }.coerceAtLeast(0)
 
-    /** Same episode number in every loaded source: the chosen source first, starting at the chosen line. */
+    /**
+     * The same video in every loaded source: the chosen source first, starting at the chosen line. 别的线路按集名找同一个
+     * 视频（见 [EpisodeMatch]），不按序号：综艺各源分集不一样，序号一错位就放成了另一期；对不上的线路不当候选。
+     */
     private fun rawVodCandidates(ep: Int): List<Cand> = buildList {
+        val here = details[curSrc]?.lines?.getOrNull(curLine)?.episodes
         val order = listOf(curSrc) + details.keys.filter { it != curSrc }.sorted()
         for (s in order) {
             val lines = details[s]?.lines ?: continue
             val start = if (s == curSrc) curLine else directLine(details[s]!!)
             for (k in lines.indices) {
                 val li = (start + k) % lines.size
-                lines[li].episodes.getOrNull(ep)?.let { add(Cand(it.url, "${items[s].sourceName} · ${lines[li].name}", s, li)) }
+                val eps = lines[li].episodes
+                // 当前这条线路自己，或者还不知道当前线路的选集（详情没加载）：按序号，和以前一样
+                val at = if ((s == curSrc && li == curLine) || here == null) ep else EpisodeMatch.match(here, ep, eps) ?: continue
+                eps.getOrNull(at)?.let { add(Cand(it.url, "${items[s].sourceName} · ${lines[li].name}", s, li, at)) }
             }
         }
     }
@@ -2416,14 +2526,17 @@ class PlayActivity : BaseActivity() {
         val d = details[s] ?: return
         // Taken (and the progress saved) before the source changes, so it belongs to the line that was playing.
         val at = carryPosition()
-        val epBefore = curEp
+        val here = details[curSrc]?.lines?.getOrNull(curLine)?.episodes
+        val there = d.lines.getOrNull(li)?.episodes.orEmpty()
+        // 那条线路里同名的那一集（各源分集不一样，不能按序号）；对不上时退回同一个序号，从头放
+        val same = if (s == curSrc && li == curLine || here == null) curEp.takeIf { it in there.indices } else EpisodeMatch.match(here, curEp, there)
         pinned = true
         curSrc = s
         curLine = li
-        curEp = curEp.coerceAtMost(maxOf(0, (d.lines.getOrNull(li)?.episodes?.size ?: 1) - 1))
+        curEp = same ?: curEp.coerceAtMost(maxOf(0, there.size - 1))
         refreshLists()
         // Another line of the same episode goes on from where this one is; a different episode starts from the top.
-        playCurrent(if (curEp == epBefore) at else 0)
+        playCurrent(if (same != null) at else 0)
     }
 
     /** The line rows stay one row that scrolls sideways; a last row opens the panel when there are more than a few. */
@@ -4014,6 +4127,8 @@ class PlayActivity : BaseActivity() {
         leaving = false
         stopKeepAlive()
         handler.postDelayed(saver, SAVE_MS)
+        handler.removeCallbacks(idleCacheTick)
+        handler.postDelayed(idleCacheTick, IDLE_TICK_MS)
         updateFavorite()
     }
 
@@ -4028,6 +4143,10 @@ class PlayActivity : BaseActivity() {
     override fun onPause() {
         super.onPause()
         handler.removeCallbacks(saver)
+        // 离开前台不再空闲预缓存（画中画、切到别的应用）
+        handler.removeCallbacks(idleCacheTick)
+        prefetch?.setIdle(0.0, false)
+        idleCaching = false
         saveProgress()
         val inPip = pipRequested || pipMode
         val audio = !isTv && !inPip && !isFinishing && !isChangingConfigurations && Store.leaveAction() == "audio" && player?.isPlaying == true

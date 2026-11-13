@@ -659,4 +659,73 @@ class PrefetchSchedulerTest {
         rig.executor.tasks.removeFirst().run() // 4: from 21 to 42 s, begun the moment 2 ended: an observation of its own
         assertTrue(rig.latch.tripped("https://cdn.test/v/seg9.ts"))
     }
+
+    // ---- 空闲预缓存 ----
+
+    @Test
+    fun idleCachingFetchesAheadOneAtATimeEvenOnAFastLine() {
+        val rig = Rig()
+        rig.read(0, 500) // fast line: normal fetching ahead stays off
+        rig.read(1, 500)
+        assertTrue(rig.executor.tasks.isEmpty())
+        rig.scheduler.setIdle(10.0, true) // 10 s = segments 2, 3, 4 (3.5 s each)
+        assertEquals(1, rig.executor.tasks.size) // one connection
+        rig.executor.runAll()
+        assertEquals(listOf(rig.seg(2), rig.seg(3), rig.seg(4)), rig.fetcher.fetched)
+        assertEquals(0, rig.scheduler.idlePending)
+    }
+
+    @Test
+    fun idleCachingSkipsWhatIsCachedAndStopsWhenThePlayerNeedsTheLine() {
+        val rig = Rig()
+        rig.read(0, 500)
+        rig.fetcher.cached += rig.seg(1)
+        rig.scheduler.setIdle(20.0, true)
+        assertEquals(1, rig.executor.tasks.size)
+        rig.scheduler.setIdle(0.0, true) // buffering again
+        rig.executor.runAll()
+        assertTrue(rig.fetcher.fetched.isEmpty()) // the one started was cancelled before it ran
+        assertEquals(0, rig.scheduler.idlePending)
+        rig.scheduler.setIdle(20.0, false) // not allowed (metered, switched off)
+        assertTrue(rig.executor.tasks.isEmpty())
+    }
+
+    @Test
+    fun playerMovingOnKeepsIdleFetchesAheadButDropsOnesItPassed() {
+        val rig = Rig()
+        rig.read(0, 500)
+        rig.scheduler.setIdle(30.0, true) // segments 1..9
+        // seg1 is handed out when the player gets there: the player joins it, and it is never downloaded twice
+        assertEquals(Mode.JOINED, rig.open(rig.seg(1)))
+        rig.executor.runAll()
+        assertTrue(rig.fetcher.fetched.count { it == rig.seg(1) } <= 1)
+        assertTrue(rig.seg(2) in rig.fetcher.fetched)
+        assertTrue(rig.seg(9) in rig.fetcher.fetched)
+        // a jump forward past what was queued: what is now behind the player is dropped
+        val rig2 = Rig()
+        rig2.read(0, 500)
+        rig2.scheduler.setIdle(30.0, true)
+        rig2.read(20, 500)
+        rig2.executor.runAll()
+        assertTrue(rig2.fetcher.fetched.none { it == rig2.seg(3) || it == rig2.seg(9) })
+    }
+
+    @Test
+    fun idleFailureStopsTheHostButAMissingFileOnlySkipsIt() {
+        val rig = Rig()
+        rig.read(0, 500)
+        rig.fetcher.outcome = { if (it == rig.seg(1)) Outcome.Failed("HTTP 404", hostWide = false) else Outcome.Done }
+        rig.scheduler.setIdle(10.0, true)
+        rig.executor.runAll()
+        assertEquals(listOf(rig.seg(1), rig.seg(2), rig.seg(3)), rig.fetcher.fetched)
+        val rig2 = Rig()
+        rig2.read(0, 500)
+        rig2.fetcher.outcome = { Outcome.Failed("refused") }
+        rig2.scheduler.setIdle(10.0, true)
+        rig2.executor.runAll()
+        assertEquals(listOf(rig2.seg(1)), rig2.fetcher.fetched)
+        rig2.scheduler.setIdle(10.0, true)
+        assertTrue(rig2.executor.tasks.isEmpty())
+        assertFalse(rig2.latch.tripped(rig2.seg(5))) // the extra-connection fetching is not given up on for it
+    }
 }

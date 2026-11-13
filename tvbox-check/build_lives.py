@@ -151,7 +151,8 @@ def speed_test(url):
             # Abort once the download takes longer than the segment plays: that lags for sure.
             _, data, secs = get(DIRECT, seg_url, STREAM_TIMEOUT, 32 * 1024 * 1024, deadline=duration)
         except Exception as e:
-            return {"ok": False, "note": f"segment {type(e).__name__}"}
+            # 「too slow」是自己设的期限到了（数据在来、只是慢），和连不上、不回数据的超时分开
+            return {"ok": False, "note": "segment too slow" if str(e) == "too slow" else f"segment {type(e).__name__}"}
         if len(data) < 1024:
             return {"ok": False, "note": "segment too small"}
         speedup = duration / max(secs, 0.01)

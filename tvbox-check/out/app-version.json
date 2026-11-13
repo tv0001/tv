@@ -1,9 +1,9 @@
 {
-  "versionCode": 40,
-  "versionName": "1.0.39",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.39.apk",
-  "sha256": "0a304f3aa43ebe35bcdc77a5c00bb6f13eeef63a47580c44a44cc5221e128c38",
-  "size": 4586206,
-  "notes": "手机首页：上下滑动时，列表顶部不再出现一条黑色阴影。",
+  "versionCode": 41,
+  "versionName": "1.0.40",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.40.apk",
+  "sha256": "1d315e64698f2b141ec3dd27945b1d845e0efa1ebd857d18e4ea74a248bda94a",
+  "size": 4590302,
+  "notes": "点播：播放中反复卡顿或卡住时，自动换到测过更流畅的线路；自动换源按集名找同一集，综艺不会再跳到别的期；暂停或网络空闲时提前缓存后面的视频（缓存上限 1G）；同一部片先试播放速度快的源。直播：卡住几秒就自动换到流畅的线路。",
   "force": false
 }
