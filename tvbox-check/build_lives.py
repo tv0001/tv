@@ -26,7 +26,7 @@ import urllib.request
 UA = "okhttp/3.12.0"
 LIST_TIMEOUT = 15
 STREAM_TIMEOUT = 6
-MAX_TESTED_PER_CHANNEL = 10  # about one try per source list
+MAX_TESTED_PER_CHANNEL = 15  # about one try per source list
 KEEP_PER_CHANNEL = 3
 # Hosts whose streams were seen carrying inserted commercials (400-number health-product spots) across many
 # channels, while other hosts showed the clean programme at the same moment. Used only when nothing else exists.

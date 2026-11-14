@@ -27,6 +27,54 @@
     {
       "name": "摸鱼儿",
       "url": "http://我不是.摸鱼儿.top"
+    },
+    {
+      "name": "qist js",
+      "url": "https://raw.githubusercontent.com/qist/tvbox/master/js.json"
+    },
+    {
+      "name": "qist dianshi",
+      "url": "https://raw.githubusercontent.com/qist/tvbox/master/dianshi.json"
+    },
+    {
+      "name": "qist 0825",
+      "url": "https://raw.githubusercontent.com/qist/tvbox/master/0825.json"
+    },
+    {
+      "name": "qist 0821",
+      "url": "https://raw.githubusercontent.com/qist/tvbox/master/0821.json"
+    },
+    {
+      "name": "牛虎",
+      "url": "https://raw.githubusercontent.com/niubihu1/tvbox/main/1.json"
+    },
+    {
+      "name": "心魔直连",
+      "url": "https://raw.githubusercontent.com/yw88075/tvbox/main/yw.json"
+    },
+    {
+      "name": "哈吉米备份",
+      "url": "https://raw.githubusercontent.com/lubin776/tvbox-api-backup/main/tvbox/哈吉米.json"
+    },
+    {
+      "name": "王二小new",
+      "url": "http://new.xn--4kq62z5rby2qupq9ub.top/"
+    },
+    {
+      "name": "凯速",
+      "url": "https://6800.kstore.vip/fish.json"
+    },
+    {
+      "name": "香雅情yydf",
+      "url": "https://raw.githubusercontent.com/yydfys/yydf/main/XYQTVBox/xyq.json"
+    },
+    {
+      "name": "小马",
+      "url": "https://szyyds.cn/tv/x.json"
+    },
+    {
+      "name": "挺好",
+      "url": "https://ztha.top/TVBox/thdjk.json"
     }
   ]
 }

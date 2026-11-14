@@ -1,123 +1,253 @@
 {
  "sites": [
   {
-   "key": "https://cj.lzcaiji.com/api.php/provide/vod",
-   "name": "量子资源",
+   "key": "https://xiguazy.tv/api.php/provide/vod",
+   "name": "西瓜资源",
    "type": 1,
-   "api": "https://cj.lzcaiji.com/api.php/provide/vod",
-   "ms": 2531,
+   "api": "https://xiguazy.tv/api.php/provide/vod/",
+   "ms": 2146,
    "count": 20,
-   "from": "cms-candidates.tsv",
-   "play": 2.35
+   "from": "牛虎",
+   "play": 18.0
   },
   {
    "key": "https://iqiyizyapi.com/api.php/provide/vod",
    "name": "爱奇艺资源",
    "type": 1,
    "api": "https://iqiyizyapi.com/api.php/provide/vod",
-   "ms": 3308,
+   "ms": 2494,
    "count": 20,
    "from": "cms-candidates.tsv",
-   "play": 2.25
+   "play": 11.3
+  },
+  {
+   "key": "https://lzizy1.com/api.php/provide/vod",
+   "name": "量子资源",
+   "type": 1,
+   "api": "https://lzizy1.com/api.php/provide/vod",
+   "ms": 1637,
+   "count": 20,
+   "from": "cms-candidates.tsv",
+   "play": 4.6
+  },
+  {
+   "key": "https://360zy.com/api.php/provide/vod",
+   "name": "三六零",
+   "type": 1,
+   "api": "https://360zy.com/api.php/provide/vod",
+   "ms": 1577,
+   "count": 20,
+   "from": "哈吉米备份",
+   "play": 3.7
+  },
+  {
+   "key": "https://360zyzz.com/api.php/provide/vod",
+   "name": "360 资源",
+   "type": 1,
+   "api": "https://360zyzz.com/api.php/provide/vod",
+   "ms": 2261,
+   "count": 20,
+   "from": "cms-candidates.tsv",
+   "play": 3.5
   },
   {
    "key": "https://api.maoyanapi.top/api.php/provide/vod",
    "name": "猫眼资源",
    "type": 1,
    "api": "https://api.maoyanapi.top/api.php/provide/vod",
-   "ms": 1998,
+   "ms": 1306,
    "count": 30,
-   "from": "cms-candidates.tsv",
-   "play": 1.3
+   "from": "牛虎",
+   "play": 3.4
   },
   {
-   "key": "https://www.huyaapi.com/api.php/provide/vod",
-   "name": "虎牙资源",
+   "key": "https://subocaiji.com/api.php/provide/vod/?ac=list",
+   "name": "速博资源",
    "type": 1,
-   "api": "https://www.huyaapi.com/api.php/provide/vod/",
-   "ms": 5230,
+   "api": "https://subocaiji.com/api.php/provide/vod/?ac=list",
+   "ms": 1376,
+   "count": 20,
+   "from": "牛虎",
+   "play": 2.6
+  },
+  {
+   "key": "https://api.guangsuapi.com/api.php/provide/vod",
+   "name": "🌼光速┃资源🌼",
+   "type": 1,
+   "api": "https://api.guangsuapi.com/api.php/provide/vod/",
+   "ms": 1421,
+   "count": 20,
+   "from": "哈吉米备份",
+   "play": 2.4
+  },
+  {
+   "key": "https://ys.cxkjg.cn/api/provide/vod",
+   "name": "创享资源",
+   "type": 1,
+   "api": "https://ys.cxkjg.cn/api/provide/vod",
+   "ms": 4088,
    "count": 20,
    "from": "cms-candidates.tsv",
-   "play": 1.3
+   "play": 2.4
+  },
+  {
+   "key": "https://taopianapi.com/cjapi/mc/vod/json.html",
+   "name": "❤淘片资源",
+   "type": 1,
+   "api": "https://taopianapi.com/cjapi/mc/vod/json.html",
+   "ms": 3488,
+   "count": 30,
+   "from": "牛虎",
+   "play": 2.2
+  },
+  {
+   "key": "https://api.ukuapi88.com/api.php/provide/vod/?ac=list",
+   "name": "U酷资源",
+   "type": 1,
+   "api": "https://api.ukuapi88.com/api.php/provide/vod/?ac=list",
+   "ms": 1325,
+   "count": 20,
+   "from": "牛虎",
+   "play": 2.1
+  },
+  {
+   "key": "https://www.haohuazy.com/api.php/provide/vod",
+   "name": "豪华资源",
+   "type": 1,
+   "api": "https://www.haohuazy.com/api.php/provide/vod",
+   "ms": 1001,
+   "count": 20,
+   "from": "cms-candidates.tsv",
+   "play": 2.0
+  },
+  {
+   "key": "https://jyzyapi.com/provide/vod/from/jinyingm3u8/at/json",
+   "name": "🌼金鹰┃资源🌼",
+   "type": 1,
+   "api": "https://jyzyapi.com/provide/vod/from/jinyingm3u8/at/json",
+   "ms": 1646,
+   "count": 20,
+   "from": "哈吉米备份",
+   "play": 2.0
+  },
+  {
+   "key": "https://www.hongniuzy2.com/api.php/provide/vod",
+   "name": "🐂┃红牛┃采集",
+   "type": 1,
+   "api": "https://www.hongniuzy2.com/api.php/provide/vod/",
+   "ms": 2598,
+   "count": 20,
+   "from": "牛虎",
+   "play": 1.8
+  },
+  {
+   "key": "https://www.huyaapi.com/api.php/provide/vod/from/hym3u8",
+   "name": "🌼虎牙┃采集🌼",
+   "type": 1,
+   "api": "https://www.huyaapi.com/api.php/provide/vod/from/hym3u8",
+   "ms": 1122,
+   "count": 20,
+   "from": "哈吉米备份",
+   "play": 1.7
   },
   {
    "key": "https://api.ffzyapi.com/api.php/provide/vod",
    "name": "非凡资源",
    "type": 1,
    "api": "https://api.ffzyapi.com/api.php/provide/vod",
-   "ms": 2058,
+   "ms": 1600,
    "count": 20,
    "from": "cms-candidates.tsv",
+   "play": 1.7
+  },
+  {
+   "key": "https://cj.rycjapi.com/api.php/provide/vod/?ac=list",
+   "name": "如意资源",
+   "type": 1,
+   "api": "https://cj.rycjapi.com/api.php/provide/vod/?ac=list",
+   "ms": 2226,
+   "count": 20,
+   "from": "牛虎",
+   "play": 1.4
+  },
+  {
+   "key": "https://api.xinlangapi.com/xinlangapi.php/provide/vod",
+   "name": "新浪资源",
+   "type": 1,
+   "api": "https://api.xinlangapi.com/xinlangapi.php/provide/vod/",
+   "ms": 1559,
+   "count": 20,
+   "from": "cms-candidates.tsv",
+   "play": 1.3
+  },
+  {
+   "key": "https://api.yyzy-tv.vip/inc/apijson.php",
+   "name": "优质资源",
+   "type": 1,
+   "api": "https://api.yyzy-tv.vip/inc/apijson.php",
+   "ms": 1811,
+   "count": 20,
+   "from": "cms-candidates.tsv",
+   "play": 1.3
+  },
+  {
+   "key": "https://caiji.dyttzyapi.com/api.php/provide/vod",
+   "name": "🌼电影┃天堂🌼",
+   "type": 1,
+   "api": "https://caiji.dyttzyapi.com/api.php/provide/vod",
+   "ms": 2305,
+   "count": 20,
+   "from": "哈吉米备份",
+   "play": 1.3
+  },
+  {
+   "key": "https://api.1080zyku.com/inc/api_mac10.php?ac=list",
+   "name": "❤优质资源",
+   "type": 1,
+   "api": "https://api.1080zyku.com/inc/api_mac10.php?ac=list",
+   "ms": 1697,
+   "count": 20,
+   "from": "牛虎",
+   "play": 1.2
+  },
+  {
+   "key": "https://jszyapi.com/api.php/provide/vod",
+   "name": "🌼极速┃资源🌼",
+   "type": 1,
+   "api": "https://jszyapi.com/api.php/provide/vod/",
+   "ms": 1310,
+   "count": 20,
+   "from": "哈吉米备份",
    "play": 1.1
   },
   {
-   "key": "https://api.guangsuapi.com/api.php/provide/vod",
-   "name": "光速资源",
+   "key": "https://ikunzyapi.com/api.php/provide/vod",
+   "name": "IK资源",
    "type": 1,
-   "api": "https://api.guangsuapi.com/api.php/provide/vod/",
-   "ms": 1988,
-   "count": 20,
-   "from": "cms-candidates.tsv",
-   "play": 0.95
-  },
-  {
-   "key": "https://cj.rycjapi.com/api.php/provide/vod",
-   "name": "如意资源",
-   "type": 1,
-   "api": "https://cj.rycjapi.com/api.php/provide/vod",
-   "ms": 6030,
-   "count": 20,
-   "from": "cms-candidates.tsv",
-   "play": 0.9
-  },
-  {
-   "key": "https://slapibf.com/api.php/provide/vod",
-   "name": "森林资源",
-   "type": 1,
-   "api": "https://slapibf.com/api.php/provide/vod",
-   "ms": 1348,
-   "count": 20,
-   "from": "cms-candidates.tsv",
-   "play": 0.85
-  },
-  {
-   "key": "https://www.hongniuzy2.com/api.php/provide/vod",
-   "name": "红牛资源",
-   "type": 1,
-   "api": "https://www.hongniuzy2.com/api.php/provide/vod/",
-   "ms": 4153,
-   "count": 20,
-   "from": "cms-candidates.tsv",
-   "play": 0.8
-  },
-  {
-   "key": "https://subocaiji.com/api.php/provide/vod",
-   "name": "速博资源",
-   "type": 1,
-   "api": "https://subocaiji.com/api.php/provide/vod/",
-   "ms": 1580,
-   "count": 20,
-   "from": "cms-candidates.tsv",
-   "play": 0.5
-  },
-  {
-   "key": "https://caiji.moduapi.cc/api.php/provide/vod",
-   "name": "魔都资源",
-   "type": 1,
-   "api": "https://caiji.moduapi.cc/api.php/provide/vod/",
-   "ms": 1597,
+   "api": "https://ikunzyapi.com/api.php/provide/vod/",
+   "ms": 897,
    "count": 20,
    "from": "cms-candidates.tsv",
    "play": 0.5
   },
   {
    "key": "https://api.wujinapi.com/api.php/provide/vod",
-   "name": "无尽影视",
+   "name": "♾️┃无尽┃采集",
    "type": 1,
-   "api": "https://api.wujinapi.com/api.php/provide/vod",
-   "ms": 1737,
+   "api": "https://api.wujinapi.com/api.php/provide/vod/",
+   "ms": 962,
    "count": 20,
-   "from": "cms-candidates.tsv",
+   "from": "牛虎",
+   "play": 0.5
+  },
+  {
+   "key": "https://cdn.dzzyapi.com/api.php/provide/vod",
+   "name": "大众影视",
+   "type": 1,
+   "api": "https://cdn.dzzyapi.com/api.php/provide/vod/",
+   "ms": 1142,
+   "count": 20,
+   "from": "牛虎",
    "play": 0.5
   },
   {
@@ -125,139 +255,59 @@
    "name": "百度",
    "type": 1,
    "api": "https://api.apibdzy.com/api.php/provide/vod?ac=list",
-   "ms": 2041,
+   "ms": 1256,
    "count": 20,
    "from": "qist jsm",
    "play": 0.5
   },
   {
-   "key": "https://ikunzyapi.com/api.php/provide/vod",
-   "name": "IK资源",
+   "key": "https://www.mdzyapi.com/api.php/provide/vod",
+   "name": "🌼魔都┃影视🌼",
    "type": 1,
-   "api": "https://ikunzyapi.com/api.php/provide/vod/",
-   "ms": 2060,
+   "api": "https://www.mdzyapi.com/api.php/provide/vod",
+   "ms": 1563,
    "count": 20,
-   "from": "cms-candidates.tsv",
+   "from": "哈吉米备份",
    "play": 0.5
   },
   {
-   "key": "https://360zyzz.com/api.php/provide/vod",
-   "name": "360 资源",
+   "key": "https://www.moduzy.com/api.php/provide/vod/?ac=list",
+   "name": "雷蒙影视 | ️🚀魔都",
    "type": 1,
-   "api": "https://360zyzz.com/api.php/provide/vod",
-   "ms": 2086,
+   "api": "https://www.moduzy.com/api.php/provide/vod/?ac=list",
+   "ms": 1568,
    "count": 20,
-   "from": "cms-candidates.tsv",
+   "from": "牛虎",
    "play": 0.5
-  },
-  {
-   "key": "https://jszyapi.com/api.php/provide/vod/?ac=list",
-   "name": "极速",
-   "type": 1,
-   "api": "https://jszyapi.com/api.php/provide/vod/?ac=list",
-   "ms": 2547,
-   "count": 20,
-   "from": "qist jsm",
-   "play": 0.5
-  },
-  {
-   "key": "https://api.xinlangapi.com/xinlangapi.php/provide/vod",
-   "name": "新浪资源",
-   "type": 1,
-   "api": "https://api.xinlangapi.com/xinlangapi.php/provide/vod/",
-   "ms": 2582,
-   "count": 20,
-   "from": "cms-candidates.tsv",
-   "play": 0.5
-  },
-  {
-   "key": "https://hhzyapi.com/api.php/provide/vod",
-   "name": "豪华资源",
-   "type": 1,
-   "api": "https://hhzyapi.com/api.php/provide/vod",
-   "ms": 3238,
-   "count": 20,
-   "from": "cms-candidates.tsv",
-   "play": 0.5
-  },
-  {
-   "key": "https://360zy.com/api.php/provide/vod",
-   "name": "360资源",
-   "type": 1,
-   "api": "https://360zy.com/api.php/provide/vod",
-   "ms": 3737,
-   "count": 20,
-   "from": "cms-candidates.tsv",
-   "play": 0.5
-  },
-  {
-   "key": "https://api.yzzy-api.com/inc/apijson.php",
-   "name": "优质资源",
-   "type": 1,
-   "api": "https://api.yzzy-api.com/inc/apijson.php",
-   "ms": 4094,
-   "count": 20,
-   "from": "cms-candidates.tsv",
-   "play": 0.5
-  },
-  {
-   "key": "https://api.ukuapi.com/api.php/provide/vod/?ac=list",
-   "name": "尤酷",
-   "type": 1,
-   "api": "https://api.ukuapi.com/api.php/provide/vod/?ac=list",
-   "ms": 5429,
-   "count": 20,
-   "from": "qist jsm",
-   "play": 0.5
-  },
-  {
-   "key": "https://api.ukuapi88.com/api.php/provide/vod",
-   "name": "U酷影视",
-   "type": 1,
-   "api": "https://api.ukuapi88.com/api.php/provide/vod",
-   "ms": 3422,
-   "count": 20,
-   "from": "cms-candidates.tsv",
-   "play": 0.25
-  },
-  {
-   "key": "https://jyzyapi.com/provide/vod/from/jinyingyun/at/json",
-   "name": "金鹰点播",
-   "type": 1,
-   "api": "https://jyzyapi.com/provide/vod/from/jinyingyun/at/json",
-   "ms": 2147,
-   "count": 20,
-   "from": "cms-candidates.tsv",
-   "play": null
   },
   {
    "key": "http://154.219.117.232:9981/jacloudapi.php/provide/vod",
    "name": "建安",
    "type": 1,
    "api": "http://154.219.117.232:9981/jacloudapi.php/provide/vod",
-   "ms": 2275,
+   "ms": 3726,
    "count": 20,
    "from": "qist jsm",
    "play": null
   },
   {
-   "key": "https://api.zuidapi.com/api.php/provide/vod",
-   "name": "最大资源",
+   "key": "https://api.ukuapi.com/api.php/provide/vod/?ac=list",
+   "name": "尤酷",
    "type": 1,
-   "api": "https://api.zuidapi.com/api.php/provide/vod",
-   "ms": 1175,
+   "api": "https://api.ukuapi.com/api.php/provide/vod/?ac=list",
+   "ms": 2029,
    "count": 20,
-   "from": "cms-candidates.tsv",
+   "from": "qist jsm",
    "play": 0.0
   },
   {
-   "key": "https://bfzyapi.com/api.php/provide/vod/?ac=list",
-   "name": "暴風",
+   "key": "https://bfzyapi.com/api.php/provide/vod",
+   "name": "暴风",
    "type": 1,
-   "api": "https://bfzyapi.com/api.php/provide/vod/?ac=list",
-   "ms": 1874,
+   "api": "https://bfzyapi.com/api.php/provide/vod",
+   "ms": 2859,
    "count": 20,
-   "from": "qist jsm",
+   "from": "Ray",
    "play": 0.0
   }
  ]

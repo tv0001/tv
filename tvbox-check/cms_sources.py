@@ -34,6 +34,8 @@ KEYWORD = "爱"
 TIMEOUT = 10
 PLAY_SAMPLES = 2  # 每个站点测几部片子的播放速度，取最快的一部（一部片子的 CDN 偶尔慢不代表整个站点慢）
 SMOOTH = 1.5      # 分片下载速度至少是播放速度的这么多倍才算流畅，和 build_lives.py、App 里的测速一样
+# 成人站：搜索结果一半以上落在这些分类里就丢掉。主流站搜「爱」也会混进几部伦理片（实测最多 3/20），所以按比例判断
+ADULT_TYPES = re.compile(r"伦理|倫理|成人|福利|情色|色情|无码|有码|自拍|偷拍|探花|麻豆|AV|里番|三级|乱伦|主播|黑料|写真")
 
 
 def load_config(url):
@@ -82,20 +84,29 @@ def collect(urls):
     return found
 
 
+def brand_of(name):
+    """站名里的品牌：「🐂┃红牛┃采集」「红牛资源」都是红牛，「❤量子资源2」是量子；只剩数字时保留（360）。"""
+    b = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]|资源|影视|点播|采集", "", name)
+    return re.sub(r"\d+$", "", b) or b or name
+
+
 def probe(api):
     # These sites are flaky; one retry keeps a good site from being dropped by a single timeout.
     return probe_once(api) or probe_once(api)
 
 
 def probe_once(api):
-    """(ms, count, m3u8 地址) when a real search answers; the addresses are the first episode of each result."""
+    """(ms, count, m3u8 地址, 前 5 个片名) when a real search answers; the addresses are the first episode of each result."""
     sep = "&" if "?" in api else "?"
     url = f"{api}{sep}ac=videolist&wd={urllib.parse.quote(KEYWORD)}&pg=1"
     try:
         status, _, body, ms = check.fetch(url, timeout=TIMEOUT)
         data = json.loads(body.decode("utf-8", errors="replace"))
         items = [x for x in data.get("list") or [] if isinstance(x, dict) and x.get("vod_name") and x.get("vod_id") not in (None, "")]
-        return (ms, len(items), [u for u in map(first_m3u8, items) if u]) if status == 200 and items else None
+        if items and sum(bool(ADULT_TYPES.search(str(x.get("type_name") or ""))) for x in items) * 2 >= len(items):
+            return None
+        names = tuple(str(x.get("vod_name")) for x in items[:5])
+        return (ms, len(items), [u for u in map(first_m3u8, items) if u], names) if status == 200 and items else None
     except Exception:
         return None
 
@@ -141,7 +152,7 @@ def main():
     good = []
     for (key, (name, api, origin)), res in tested:
         if res:
-            good.append({"key": key, "name": name, "type": 1, "api": api, "ms": res[0], "count": res[1], "from": origin, "urls": res[2]})
+            good.append({"key": key, "name": name, "type": 1, "api": api, "ms": res[0], "count": res[1], "from": origin, "urls": res[2], "sig": res[3]})
     good.sort(key=lambda s: s["ms"])
     # The same backend is often listed under several spellings (…/vod, …/vod/?ac=list); keep the fastest per host.
     seen, unique = set(), []
@@ -149,14 +160,6 @@ def main():
         host = urllib.parse.urlsplit(site["api"]).netloc.lower()
         if host not in seen:
             seen.add(host)
-            unique.append(site)
-    good = unique
-    # Several brands are mirrored on two or three hosts with identical content; searching them all only costs time.
-    seen, unique = set(), []
-    for site in good:
-        brand = re.sub(r"[\s\d资源影视点播]+", "", site["name"]) or site["name"]
-        if brand not in seen:
-            seen.add(brand)
             unique.append(site)
     good = unique
     # 真的下载视频分片测播放速度（直连）。并发低：同时下载会互相分带宽，测出来都偏慢
@@ -167,6 +170,15 @@ def main():
         site["play"] = speed
     # App 按这个顺序先试哪个源（见 Store.playRanks）：能放的按播放速度从快到慢，没测的（null）其次，放不出来的垫底
     good.sort(key=lambda s: (0 if s["play"] is None or s["play"] > 0 else 1, s["play"] is None, -(s["play"] or 0), s["ms"]))
+    # 同一品牌常有两三个镜像域名、内容相同，只留一个。放在测速之后，留下播放最快的那个镜像（测速前按延迟挑会留下慢镜像）
+    # 站名是各家配置随手起的（不同站都可能叫「烂大街」），所以还要求搜索结果一致才算同一个站的镜像
+    seen, unique = set(), []
+    for site in good:
+        brand = (brand_of(site["name"]), site.pop("sig"))
+        if brand not in seen:
+            seen.add(brand)
+            unique.append(site)
+    good = unique
     for s in good:
         p = s["play"]
         mark = "N/A " if p is None else "OK  " if p >= SMOOTH else "SLOW" if p > 0 else "DEAD"
