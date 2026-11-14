@@ -194,6 +194,7 @@ class PlayActivity : BaseActivity() {
         private const val TAP_SEEK_EDGE = 0.3f // 画面左右各这么宽算「两侧」，中间双击还是暂停
         private const val MAX_SKIP = 300
         private const val NEXT_CARD_MS = 10_000L // 离一集结束还有这么久时提示下一集
+        private const val AUTO_FULL_MS = 10_000L // 电视详情页没有按键这么久、片子在播，就自动进全屏
         private const val NEXT_CARD_MIN_MS = 5 * 60_000L // 短于这个的（短剧）照旧直接连播，不弹卡片
         private const val SUB_STEP_MS = 500L
         private const val MAX_SUB_OFFSET_MS = 300_000L
@@ -575,6 +576,11 @@ class PlayActivity : BaseActivity() {
     private val groupAdapter = ChipAdapter { epGroup = it; refreshLists() }
     private val epAdapter = ChipAdapter(fill = true) {
         val ep = epOffset + it
+        // 全屏控制栏一打开焦点就在当前集上：这时按确认是暂停 / 继续（以前焦点在「暂停」上就是这样），不能从头重播
+        if (isTv && !isLive && tvFull && ep == curEp && started) {
+            player?.let { p -> if (p.playWhenReady) { p.pause(); flashHud("已暂停", 1200) } else { p.play(); flashHud("播放", 700) } }
+            return@ChipAdapter
+        }
         // The episode already playing in the small window: keep its position, just go full screen.
         if (!(isTv && !isLive && !tvFull && ep == curEp && started)) selectEpisode(ep)
         if (isTv && !isLive && !tvFull) setTvFull(true) // like a TV box: picking an episode starts it full screen
@@ -1007,6 +1013,35 @@ class PlayActivity : BaseActivity() {
             setPanelVisible(false)
             flashHud("$title  ${epName()}", 1_500)
         }
+        armAutoFull()
+    }
+
+    /**
+     * 电视详情页闲置自动全屏（电视视频软件的做法）：一段时间没有按键、片子在播就进全屏。开着弹窗、暂停着、还没起播时不进，
+     * 过一会儿再看；按任何键都重新计时。
+     */
+    private val autoFull = Runnable {
+        if (!isTv || isLive || tvFull || isFinishing) return@Runnable
+        if (started && player?.isPlaying == true && hasWindowFocus() && !pipMode) {
+            Log.d("TVP", "details idle: full screen")
+            setTvFull(true)
+        } else armAutoFull()
+    }
+
+    private fun armAutoFull() {
+        handler.removeCallbacks(autoFull)
+        if (isTv && !isLive && !tvFull) handler.postDelayed(autoFull, AUTO_FULL_MS)
+    }
+
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        armAutoFull()
+    }
+
+    // 弹窗（简介、线路、播放设置）里的按键不经过这里，关掉弹窗、焦点回来时重新计时，免得一关就跳全屏
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) armAutoFull()
     }
 
     // ---- 往下拖小窗下面那一栏，进竖屏全屏（跟手，和 B 站一样） ---------------------------------------------------------
@@ -1594,9 +1629,28 @@ class PlayActivity : BaseActivity() {
             updateProgress()
             listOfNotNull(playPauseBtn, favoriteBtn, findViewById(R.id.playSettings))
                 .firstOrNull { it.visibility == View.VISIBLE }?.requestFocus()
+            focusCurrentEpisode()
             bumpPanel()
         } else {
             playerView.requestFocus()
+        }
+    }
+
+    /**
+     * 点播打开控制栏时焦点直接落在选集的当前集上：只有方向键和确认键的遥控器（小米等）按「下、右、确认」就是下一集，
+     * 左键是上一集。暂停在画面上按确认键就行，不用先落在「暂停」按钮上。只有一集、或者列表还没排好时，焦点留在按钮上。
+     */
+    private fun focusCurrentEpisode(tries: Int = 3) {
+        if (isLive || !overlay) return
+        val list = episodesView ?: return
+        val pos = curEp - epOffset
+        if (list.visibility != View.VISIBLE || epAdapter.itemCount < 2 || pos !in 0 until epAdapter.itemCount) return
+        if (tries == 3) list.scrollToPosition(pos)
+        // 控制栏刚从隐藏变成显示，列表要等下一帧排好才有这一项
+        list.postOnAnimation {
+            if (panel?.visibility != View.VISIBLE) return@postOnAnimation
+            val item = list.findViewHolderForAdapterPosition(pos)?.itemView
+            if (item != null) item.requestFocus() else if (tries > 1) focusCurrentEpisode(tries - 1)
         }
     }
 
@@ -3542,6 +3596,8 @@ class PlayActivity : BaseActivity() {
 
     /** With the picture focused and the controller hidden: left/right seek 10s, up/down jump to the side panel. */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        // 下面不少分支提前 return、走不到 super（onUserInteraction 在那里面），按键在这里就重新计时
+        if (event.action == KeyEvent.ACTION_DOWN) armAutoFull()
         // 按住左右键快进，松手时才真正跳过去
         if (seekPending >= 0 && event.action == KeyEvent.ACTION_UP &&
             (event.keyCode == KeyEvent.KEYCODE_DPAD_LEFT || event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT)
@@ -3556,6 +3612,16 @@ class PlayActivity : BaseActivity() {
                 KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_HEADSETHOOK -> { p?.let { if (it.isPlaying) it.pause() else it.play() }; return true }
                 KeyEvent.KEYCODE_MEDIA_PLAY -> { p?.play(); return true }
                 KeyEvent.KEYCODE_MEDIA_PAUSE -> { p?.pause(); return true }
+                // 上一集 / 下一集键：直播换台，点播换集。点播的频道 +/- 也当换集用（电视盒子遥控器常见的做法）
+                KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
+                    val step = if (event.keyCode == KeyEvent.KEYCODE_MEDIA_NEXT) 1 else -1
+                    if (isLive) switchChannel(step) else stepEpisode(step)
+                    return true
+                }
+                KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_CHANNEL_DOWN -> if (!isLive) {
+                    stepEpisode(if (event.keyCode == KeyEvent.KEYCODE_CHANNEL_UP) 1 else -1)
+                    return true
+                }
                 KeyEvent.KEYCODE_MEDIA_FAST_FORWARD, KeyEvent.KEYCODE_MEDIA_REWIND -> {
                     if (canSeek() && p != null && p.duration > 0) {
                         val delta = if (event.keyCode == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD) 30_000L else -30_000L
@@ -3582,7 +3648,7 @@ class PlayActivity : BaseActivity() {
                 bumpPanel() // the user is using the bar: keep it up
             } else {
                 // On demand the bar opens with DOWN (or MENU), and OK on the bare picture plays / pauses. Live has no
-                // play / pause and DOWN is the previous channel there, so OK opens the bar on live.
+                // play / pause and DOWN is the next channel there, so OK opens the bar on live.
                 val show = when (event.keyCode) {
                     KeyEvent.KEYCODE_MENU -> true
                     KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> isLive
@@ -3658,9 +3724,10 @@ class PlayActivity : BaseActivity() {
                     }
                 }
                 // Live: up / down change channel (the panel is one press of right away); on demand they jump to the panel.
+                // 上键上一个台、下键下一个台，跟频道列表的上下一致（TVBox、DIYP 等直播软件的默认方向）；遥控器的频道 +/- 仍是台号加减
                 KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> {
                     if (isLive) {
-                        if (event.repeatCount == 0) switchChannel(if (event.keyCode == KeyEvent.KEYCODE_DPAD_UP) 1 else -1)
+                        if (event.repeatCount == 0) switchChannel(if (event.keyCode == KeyEvent.KEYCODE_DPAD_UP) -1 else 1)
                         return true
                     } else if (panel?.visibility == View.VISIBLE) {
                         toPanel()
@@ -4173,6 +4240,7 @@ class PlayActivity : BaseActivity() {
         handler.removeCallbacks(idleCacheTick)
         handler.postDelayed(idleCacheTick, IDLE_TICK_MS)
         updateFavorite()
+        armAutoFull()
     }
 
     override fun onStart() {
@@ -4186,6 +4254,7 @@ class PlayActivity : BaseActivity() {
     override fun onPause() {
         super.onPause()
         handler.removeCallbacks(saver)
+        handler.removeCallbacks(autoFull)
         // 离开前台不再空闲预缓存（画中画、切到别的应用）
         handler.removeCallbacks(idleCacheTick)
         prefetch?.setIdle(0.0, false)

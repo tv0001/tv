@@ -1,9 +1,9 @@
 {
-  "versionCode": 43,
-  "versionName": "1.0.42",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.42.apk",
-  "sha256": "20e0270c1b2b7b5734ecafa8bb20a53325e8339a2c268061cfe2dad674cf1f43",
+  "versionCode": 44,
+  "versionName": "1.0.43",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.43.apk",
+  "sha256": "97cc5f38a35cda89aac07abf83ecaf646feae54c944e9e6e441e6360d4102543",
   "size": 4803294,
-  "notes": "jar 爬虫站点（设置里的实验功能）更安全：只从 https 地址加载 jar，订阅给了校验值时对不上就不加载新下载的 jar；本地代理只接受本机程序的直接请求，网页里的脚本调不了。",
+  "notes": "电视遥控器：直播上键上一个台、下键下一个台；点播全屏打开控制栏时焦点在当前集上，「下、右、确认」就是下一集，小米等只有方向键的遥控器也好换集；上一集 / 下一集键、点播时的频道 +/- 直接换集；详情页 10 秒没操作、正在播放时自动全屏。jar 爬虫站点：配了校验值却取不到时不放行；本地代理拒绝浏览器里网页发来的请求。",
   "force": false
 }

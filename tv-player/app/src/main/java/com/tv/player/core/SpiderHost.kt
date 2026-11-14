@@ -58,6 +58,17 @@ object SpiderHost {
     /** 取舍下载到的 jar（纯函数，见 [jarFile]）。 */
     internal enum class JarChoice { DOWNLOADED, CACHED, REFUSE }
 
+    /** 配置写了 md5 却拿不到合法的值（md5 地址不是 https、取失败、取回来不是 32 位十六进制）：当成谁都对不上。 */
+    internal const val UNRESOLVED_MD5 = "unresolved"
+
+    /** 配置里的 md5（[fetched] 是 md5 地址取回来的内容，取不到时 null）→ 要对的值；没配 md5 时 ""。 */
+    internal fun expectedMd5(spec: String, fetched: String?): String {
+        val given = spec.split(";md5;").getOrNull(1)?.trim().orEmpty()
+        if (given.isEmpty()) return ""
+        val value = (if (given.startsWith("http")) fetched.orEmpty() else given).trim().lowercase()
+        return if (Regex("[0-9a-f]{32}").matches(value)) value else UNRESOLVED_MD5
+    }
+
     /**
      * 配置给了 md5 时：下载到的对得上就用；对不上时继续用本地已有的那份，本地没有就不加载（被换掉的 jar 是能在本应用里跑的代码）。
      * 没给 md5 时用下载到的（只从 https 下，见 [jarFile]）。
@@ -70,15 +81,15 @@ object SpiderHost {
 
     /**
      * jar 下载到 code_cache（Android 14 起动态加载的文件必须只读），按地址存，只从 https 下（明文 http 在同一网络里就能被换成别的代码）。
-     * 配置里的 md5（可能是个地址，也只认 https）和本地的一样就不下；不一样就重新下，按 [choose] 取舍。不带 md5 时半天更新一次。
+     * 配置里的 md5（可能是个地址，也只认 https；配了却拿不到时见 [expectedMd5]）和本地的一样就不下；不一样就重新下，
+     * 按 [choose] 取舍。不带 md5 时半天更新一次。
      * 下载失败时用本地已有的。返回文件和它内容的 md5（内容变了才重新加载）。
      */
     private fun jarFile(spec: String): Pair<File, String> {
         val url = spec.substringBefore(';').trim()
         require(url.startsWith("https://")) { "jar 地址不是 https，不加载：$url" }
-        var md5 = spec.split(";md5;").getOrNull(1)?.trim().orEmpty()
-        if (md5.startsWith("http")) md5 = if (md5.startsWith("https://")) runCatching { get(md5).toString(Charsets.UTF_8).trim() }.getOrDefault("") else ""
-        md5 = md5.lowercase()
+        val given = spec.split(";md5;").getOrNull(1)?.trim().orEmpty()
+        val md5 = expectedMd5(spec, if (given.startsWith("https://")) runCatching { get(given).toString(Charsets.UTF_8) }.getOrNull() else null)
         val dir = File(app.codeCacheDir, "spider").apply { mkdirs() }
         val file = File(dir, md5Of(url.toByteArray()) + ".jar")
         val cached = if (file.exists()) md5Of(file.readBytes()) else ""

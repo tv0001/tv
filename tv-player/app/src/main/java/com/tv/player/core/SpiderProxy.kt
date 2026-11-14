@@ -89,12 +89,14 @@ object SpiderProxy {
     }
 
     /**
-     * 只接本机程序直接发来的请求：带 Origin 的是网页里的脚本发的（别的网站借浏览器来调本地代理），Host 不是本机的是 DNS 重绑定。
-     * jar 和播放器（OkHttp）都不带 Origin、Host 是 127.0.0.1:端口。同一台设备上别的应用仍然能调，和 TVBox 一样——jar 拼代理地址时
+     * 只接本机程序直接发来的请求：带 Origin 或 Sec-Fetch-* 的是浏览器里的网页发的（别的网站借浏览器来调本地代理），
+     * Host 不是本机的是 DNS 重绑定。jar 和播放器（OkHttp）都不带这些、Host 是 127.0.0.1:端口；Referer 不能拿来判断，
+     * 播放器会按爬虫的要求带上（比如 B 站）。同一台设备上别的应用仍然能调，和 TVBox 一样——jar 拼代理地址时
      * 只用端口，加不了口令。
      */
     internal fun allowed(headers: Map<String, String>, port: Int): Boolean {
-        if (headers.keys.any { it.equals("origin", true) }) return false
+        // 浏览器 / WebView 发的请求都带 Sec-Fetch-*（<img>、<script> 这类不带 Origin 的也带）
+        if (headers.keys.any { it.equals("origin", true) || it.startsWith("sec-fetch-", ignoreCase = true) }) return false
         val host = headers.entries.firstOrNull { it.key.equals("host", true) }?.value?.trim()?.lowercase() ?: return true
         return host in setOf("127.0.0.1", "localhost", "127.0.0.1:$port", "localhost:$port")
     }
