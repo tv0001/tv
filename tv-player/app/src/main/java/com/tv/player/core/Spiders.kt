@@ -117,10 +117,11 @@ object Spiders {
             val api = o.optString("api").trim()
             if (!api.startsWith("csp_") || api.removePrefix("csp_") in blocked) continue
             if (o.optInt("searchable", 1) == 0) continue
-            // 站点自己的 jar；相对地址（./xx.jar）没法定位就跳过（订阅里的已由 tvbox-check 补成完整地址）
+            // 站点自己的 jar；只认 https（明文 http 能被同一网络里的人换成别的代码，见 SpiderHost.jarFile），
+            // 相对地址（./xx.jar）没法定位也跳过（订阅里的已由 tvbox-check 补成完整地址）
             val own = o.optString("jar").trim()
-            if (own.isNotEmpty() && !own.startsWith("http")) continue
-            if (own.isEmpty() && !jar.startsWith("http")) continue
+            if (own.isNotEmpty() && !own.startsWith("https://")) continue
+            if (own.isEmpty() && !jar.startsWith("https://")) continue
             val key = o.optString("key").trim()
             if (key.isEmpty()) continue
             val name = o.optString("name").replace(Regex("\\[.*?]"), "").trim().ifEmpty { key }

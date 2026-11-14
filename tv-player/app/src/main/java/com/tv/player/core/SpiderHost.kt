@@ -55,17 +55,29 @@ object SpiderHost {
         throw IllegalStateException("爬虫出错：$e")
     }
 
+    /** 取舍下载到的 jar（纯函数，见 [jarFile]）。 */
+    internal enum class JarChoice { DOWNLOADED, CACHED, REFUSE }
+
     /**
-     * jar 下载到 code_cache（Android 14 起动态加载的文件必须只读），按地址存。照 TVBox（FongMi）的做法，配置里的 md5
-     * 只用来判断缓存还能不能用：本地的和它一样就不下；不一样就重新下，下到什么用什么（配置和 jar 常不同步，比如镜像缓存了
-     * 旧 jar，较真只会让所有 jar 站点都不能用）。md5 也可能是个地址，要再去取。不带 md5 时半天更新一次。
+     * 配置给了 md5 时：下载到的对得上就用；对不上时继续用本地已有的那份，本地没有就不加载（被换掉的 jar 是能在本应用里跑的代码）。
+     * 没给 md5 时用下载到的（只从 https 下，见 [jarFile]）。
+     */
+    internal fun choose(expected: String, cached: String, downloaded: String): JarChoice = when {
+        expected.isEmpty() || downloaded == expected -> JarChoice.DOWNLOADED
+        cached.isNotEmpty() -> JarChoice.CACHED
+        else -> JarChoice.REFUSE
+    }
+
+    /**
+     * jar 下载到 code_cache（Android 14 起动态加载的文件必须只读），按地址存，只从 https 下（明文 http 在同一网络里就能被换成别的代码）。
+     * 配置里的 md5（可能是个地址，也只认 https）和本地的一样就不下；不一样就重新下，按 [choose] 取舍。不带 md5 时半天更新一次。
      * 下载失败时用本地已有的。返回文件和它内容的 md5（内容变了才重新加载）。
      */
     private fun jarFile(spec: String): Pair<File, String> {
         val url = spec.substringBefore(';').trim()
-        require(url.startsWith("http")) { "配置里没有 spider jar" }
+        require(url.startsWith("https://")) { "jar 地址不是 https，不加载：$url" }
         var md5 = spec.split(";md5;").getOrNull(1)?.trim().orEmpty()
-        if (md5.startsWith("http")) md5 = runCatching { get(md5).toString(Charsets.UTF_8).trim() }.getOrDefault("")
+        if (md5.startsWith("http")) md5 = if (md5.startsWith("https://")) runCatching { get(md5).toString(Charsets.UTF_8).trim() }.getOrDefault("") else ""
         md5 = md5.lowercase()
         val dir = File(app.codeCacheDir, "spider").apply { mkdirs() }
         val file = File(dir, md5Of(url.toByteArray()) + ".jar")
@@ -78,7 +90,14 @@ object SpiderHost {
             throw e
         }
         val got = md5Of(bytes)
-        if (md5.isNotEmpty() && got != md5) Log.w(TAG, "jar 的 md5（$got）和配置里的（$md5）不一致，照样用下载到的")
+        when (choose(md5, cached, got)) {
+            JarChoice.REFUSE -> throw IllegalStateException("jar 的 md5（$got）和配置里的（$md5）不一致，不加载")
+            JarChoice.CACHED -> {
+                Log.w(TAG, "jar 的 md5（$got）和配置里的（$md5）不一致，继续用本地的")
+                return file to cached
+            }
+            JarChoice.DOWNLOADED -> Unit
+        }
         if (got == cached) {
             file.setLastModified(System.currentTimeMillis())
             return file to cached

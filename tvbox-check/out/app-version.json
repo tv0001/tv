@@ -1,9 +1,9 @@
 {
-  "versionCode": 42,
-  "versionName": "1.0.41",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.41.apk",
-  "sha256": "833cc8494871ff4d08795475cc9d502e948037915a27a0b1890c06bafbe61729",
+  "versionCode": 43,
+  "versionName": "1.0.42",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.42.apk",
+  "sha256": "20e0270c1b2b7b5734ecafa8bb20a53325e8339a2c268061cfe2dad674cf1f43",
   "size": 4803294,
-  "notes": "设置里新增「jar 爬虫站点（实验）」：打开后，订阅里用 TVBox jar 爬虫的站点也能搜索和播放（在单独的进程里运行，不运行 jar 自带的原生程序）；支持 B 站等 DASH 视频、需要解析的网页播放地址、网盘资源站里的夸克分享（播放时转存到你的网盘，需要夸克网页版登录）。夸克网盘和网络存储的登录改为加密保存。只剩最后一条线路时多等一会儿再判失败。",
+  "notes": "jar 爬虫站点（设置里的实验功能）更安全：只从 https 地址加载 jar，订阅给了校验值时对不上就不加载新下载的 jar；本地代理只接受本机程序的直接请求，网页里的脚本调不了。",
   "force": false
 }

@@ -20,8 +20,8 @@ android {
         applicationId = 'com.tv.player'
         minSdk = legacy ? 21 : 26
         targetSdk = 35
-        versionCode = (project.findProperty('appVersionCode') ?: '42').toString().toInteger()
-        versionName = (project.findProperty('appVersionName') ?: '1.0.41').toString()
+        versionCode = (project.findProperty('appVersionCode') ?: '43').toString().toInteger()
+        versionName = (project.findProperty('appVersionName') ?: '1.0.42').toString()
         buildConfigField 'boolean', 'LEGACY', legacy.toString()
         // 唯一的原生库是 ffmpeg 音频解码：电视盒子和手机基本都是 ARM，只打这两种（少 3MB）。没有 ARM 转译的 x86 设备装不上
         ndk {

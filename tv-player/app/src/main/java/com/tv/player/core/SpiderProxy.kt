@@ -65,13 +65,16 @@ object SpiderProxy {
         target.substringAfter('?', "").split('&').filter { it.isNotEmpty() }.forEach {
             params[URLDecoder.decode(it.substringBefore('='), "UTF-8")] = URLDecoder.decode(it.substringAfter('=', ""), "UTF-8")
         }
-        // 请求头也并进参数（FongMi 的代理就是这样，头名小写），爬虫靠它拿 Range 等
+        val reqHeaders = LinkedHashMap<String, String>()
         while (true) {
             val h = input.readLine()
             if (h.isNullOrEmpty()) break
             val colon = h.indexOf(':')
-            if (colon > 0) params[h.substring(0, colon).trim().lowercase()] = h.substring(colon + 1).trim()
+            if (colon > 0) reqHeaders[h.substring(0, colon).trim().lowercase()] = h.substring(colon + 1).trim()
         }
+        if (!allowed(reqHeaders, port)) return respond(c, 403, "text/plain", "forbidden".byteInputStream(), emptyMap())
+        // 请求头也并进参数（FongMi 的代理就是这样，头名小写），爬虫靠它拿 Range 等
+        params.putAll(reqHeaders)
         if (params["do"] == "ck") return respond(c, 200, "text/plain", "ok".byteInputStream(), emptyMap())
         val r = SpiderHost.proxy(params) ?: return respond(c, 404, "text/plain", "".byteInputStream(), emptyMap())
         val body: InputStream = when (val b = r.getOrNull(2)) {
@@ -83,6 +86,17 @@ object SpiderProxy {
         @Suppress("UNCHECKED_CAST")
         val headers = (r.getOrNull(3) as? Map<String, Any?>).orEmpty()
         respond(c, (r.getOrNull(0) as? Number)?.toInt() ?: 200, r.getOrNull(1)?.toString() ?: "application/octet-stream", body, headers)
+    }
+
+    /**
+     * 只接本机程序直接发来的请求：带 Origin 的是网页里的脚本发的（别的网站借浏览器来调本地代理），Host 不是本机的是 DNS 重绑定。
+     * jar 和播放器（OkHttp）都不带 Origin、Host 是 127.0.0.1:端口。同一台设备上别的应用仍然能调，和 TVBox 一样——jar 拼代理地址时
+     * 只用端口，加不了口令。
+     */
+    internal fun allowed(headers: Map<String, String>, port: Int): Boolean {
+        if (headers.keys.any { it.equals("origin", true) }) return false
+        val host = headers.entries.firstOrNull { it.key.equals("host", true) }?.value?.trim()?.lowercase() ?: return true
+        return host in setOf("127.0.0.1", "localhost", "127.0.0.1:$port", "localhost:$port")
     }
 
     private fun respond(c: Socket, code: Int, type: String, body: InputStream, headers: Map<String, Any?>) {
