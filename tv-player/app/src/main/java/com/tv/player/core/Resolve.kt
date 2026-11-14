@@ -16,6 +16,10 @@ object Resolve {
         if (Quark.isLink(playUrl)) return runCatching { Quark.link(playUrl) }.getOrNull()
         // 网络存储（WebDAV / SMB）里的文件本身就是视频，地址不会过期
         if (NetStore.isLink(playUrl)) return NetStore.resolve(playUrl)
+        // jar 爬虫的选集：调爬虫的 playerContent 换真实地址
+        if (Spiders.isLink(playUrl)) return Spiders.play(playUrl)
+        // jar 网盘资源站的夸克分享：转存到自己的网盘再放（见 PanShares）
+        if (PanShares.isLink(playUrl)) return runCatching { PanShares.stream(playUrl) }.onFailure { android.util.Log.w("PanShares", "转存播放失败：$it") }.getOrNull()
         val u = runCatching { URL(playUrl) }.getOrNull() ?: return null
         val pathAndQuery = u.path + (u.query?.let { "?$it" } ?: "")
         if (direct.containsMatchIn(pathAndQuery)) return playUrl

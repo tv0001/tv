@@ -50,6 +50,12 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- TVBox jar 爬虫跑在单独的进程里，第三方代码碰不到主进程内存（见 core/SpiderHost.kt） -->
+        <service
+            android:name=".core.SpiderService"
+            android:exported="false"
+            android:process=":spider" />
+
         <service
             android:name=".ui.KeepAliveService"
             android:exported="false"

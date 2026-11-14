@@ -107,6 +107,8 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import coil.load
 import com.tv.player.R
 import com.tv.player.core.Cms
+import com.tv.player.core.PanShares
+import com.tv.player.core.Spiders
 import com.tv.player.core.CatchupUrl
 import com.tv.player.core.Dlna
 import com.tv.player.core.EpisodeMatch
@@ -163,6 +165,7 @@ import kotlin.math.roundToInt
 class PlayActivity : BaseActivity() {
     companion object {
         private const val STALL_MS = 20_000L
+        private const val LAST_LINE_EXTRA_MS = 25_000L // 已经没有别的线路可换、还在加载时多等这么久（见 stall）
         private const val MID_STALL_MS = 15_000L // 播放中途连续缓冲这么久（没报错、只是不来数据），有别的线路就换过去
         private const val LIVE_STALL_PROBE_MS = 3_000L // 直播中途缓冲这么久，开始测其它线路
         private const val LIVE_MID_STALL_MS = 8_000L // 直播没有缓冲余量可保，卡这么久就换到测出来流畅的线路
@@ -410,9 +413,32 @@ class PlayActivity : BaseActivity() {
     private var player: ExoPlayer? = null
     private var playJob: Job? = null
     private val handler = Handler(Looper.getMainLooper())
-    private val stall = Runnable {
+    private var stallExtended = false
+
+    /**
+     * 起播 [STALL_MS] 还没出画面就换下一条线路。已经没有别的线路可换、播放器也没报错（还在加载）时，再等
+     * [LAST_LINE_EXTRA_MS]（一次）：换不了线，判失败只会让人干等后重来。比如 B 站的音频在 PCDN 节点上，
+     * 第一次请求偶尔 10 秒超时、重试后二十几秒才开播。
+     */
+    private val stall: Runnable = Runnable {
+        val p = player
+        if (!stallExtended && !isLive && p != null && p.playbackState == Player.STATE_BUFFERING && p.playerError == null && noOtherLine()) {
+            stallExtended = true
+            Log.d("TVP", "stalled on ${current?.label}, no other line: waiting longer")
+            handler.postDelayed(stall, LAST_LINE_EXTRA_MS)
+            return@Runnable
+        }
         Log.d("TVP", "stalled on ${current?.label}")
         failOver()
+    }
+
+    /** 点播这一集已经没有没试过的线路（所有源的详情都取过了）。 */
+    private fun noOtherLine() = items.indices.all { details.containsKey(it) } && candidatesAt(curEp).none { it.url !in tried }
+
+    private fun armStall() {
+        stallExtended = false
+        handler.removeCallbacks(stall)
+        handler.postDelayed(stall, STALL_MS)
     }
 
     /**
@@ -677,7 +703,11 @@ class PlayActivity : BaseActivity() {
         // are a drive's files: their addresses expire and need the login.
         // A drive's files (either kind of login) are left alone as a whole: one film would fill the cache on its own.
         val fromDrive = !isLive && items.any { it.sourceKey == Quark.SOURCE_KEY || it.sourceKey == QuarkWeb.SOURCE_KEY || it.sourceKey == NetStore.SOURCE_KEY }
-        val bypass = { uri: Uri -> !CachePolicy.cacheable(uri.scheme, uri.path) || uri.host?.let(QuarkWeb::headersFor) != null }
+        // jar 爬虫的清单也不缓存：本地代理（127.0.0.1）现生成的、地址里看不出是清单的（getM3u8?…），内容每次都可能变
+        val bypass = { uri: Uri ->
+            !CachePolicy.cacheable(uri.scheme, uri.path) || uri.host?.let(QuarkWeb::headersFor) != null ||
+                uri.host == "127.0.0.1" || Spiders.mimeFor(uri.toString()) != null
+        }
         val dataSource: DataSource.Factory = if (isLive || fromDrive) network else {
             val cache = PlayCache.get(this)
             // Lines that limit each connection: the next segments are fetched ahead over other connections (an HLS stream),
@@ -1759,7 +1789,8 @@ class PlayActivity : BaseActivity() {
             val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
             @Suppress("DEPRECATION") // activeNetwork 要 Android 6.0，兼容包在更老的系统上用旧接口
             val online = if (Build.VERSION.SDK_INT >= 23) cm.activeNetwork != null else cm.activeNetworkInfo != null
-            if (!isLive && !started && sourceError && online) (resolvedUrl ?: current?.url)?.let { Store.markBadHost(it) }
+            // jar 爬虫的线路失败多半是爬虫或请求头的问题，不是 CDN 坏了：不标，免得连累同一 CDN 上的 CMS 线路
+            if (!isLive && !started && sourceError && online && current?.url?.let { Spiders.isLink(it) || PanShares.isLink(it) } != true) (resolvedUrl ?: current?.url)?.let { Store.markBadHost(it) }
             setInfo("这条线路播放失败，正在换下一条…")
             failOver()
         }
@@ -1830,8 +1861,7 @@ class PlayActivity : BaseActivity() {
             handler.removeCallbacks(retryNow)
             handler.postDelayed(retryNow, RETRY_DELAY_MS)
         }
-        handler.removeCallbacks(stall)
-        handler.postDelayed(stall, STALL_MS)
+        armStall()
         return true
     }
 
@@ -2042,7 +2072,15 @@ class PlayActivity : BaseActivity() {
                     dropCover.run()
                     if (portraitFull) setPortraitFull(false) // the message is on the page behind
                     updateKeepScreen()
-                    setInfo(if (QuarkWeb.expired && items.any { it.sourceKey == QuarkWeb.SOURCE_KEY }) "夸克网盘的网页版登录已失效，请到设置里重新扫码登录" else "所有线路都试过了，没有能播放的。点这里重试，或换一部")
+                    // jar 网盘资源站的夸克分享要转存到自己的网盘才能放（见 PanShares）：缺登录时说清楚
+                    val panTried = tried.any(PanShares::isLink)
+                    setInfo(
+                        when {
+                            QuarkWeb.expired && (panTried || items.any { it.sourceKey == QuarkWeb.SOURCE_KEY }) -> "夸克网盘的网页版登录已失效，请到设置里重新扫码登录"
+                            panTried && !QuarkWeb.loggedIn -> "这部片子在夸克网盘的分享里，要先到设置里扫码登录夸克网页版才能播放"
+                            else -> "所有线路都试过了，没有能播放的。点这里重试，或换一部"
+                        },
+                    )
                     return@launch
                 }
                 setInfo("正在连接：${cand.label}")
@@ -2069,7 +2107,7 @@ class PlayActivity : BaseActivity() {
                     prepare()
                     play()
                 }
-                handler.postDelayed(stall, STALL_MS)
+                armStall()
                 return@launch
             }
         }
@@ -2193,6 +2231,8 @@ class PlayActivity : BaseActivity() {
     private fun quickResume(saved: Library.Entry): Boolean {
         val q = Store.vodLast(key) ?: return false
         if (q.ep != saved.ep || System.currentTimeMillis() - q.time > QUICK_MS) return false
+        // jar 爬虫的地址不能直接重放（请求头、媒体类型只在当时的内存里），见 rememberLine
+        if (Spiders.isLink(q.url) || PanShares.isLink(q.url)) return false
         val src = items.indexOfFirst { it.sourceKey == q.src }.takeIf { it >= 0 } ?: return false
         curSrc = src
         curLine = q.line
@@ -2418,7 +2458,7 @@ class PlayActivity : BaseActivity() {
             else -> emptyList()
         }
         val targets = wanted.filter { it in episodes.indices }
-            .filter { !QuarkWeb.isLink(episodes[it].url) && !Quark.isLink(episodes[it].url) }
+            .filter { !QuarkWeb.isLink(episodes[it].url) && !Quark.isLink(episodes[it].url) && !PanShares.isLink(episodes[it].url) }
         // Whatever was loaded for other episodes or other lines (the viewer jumped, or changed line) is let go of, and so are
         // sources the player has finished with; what the player is using now stays.
         preloaded.entries.filter { it.key !in targets || it.value.src != curSrc || it.value.line != curLine }.forEach {
@@ -2735,7 +2775,8 @@ class PlayActivity : BaseActivity() {
             val lineName = details[c.src]?.lines?.getOrNull(c.line)?.name ?: c.label.substringAfter(" · ")
             Store.setVodLine(key, items[c.src].sourceKey, lineName)
             // A drive address expires within hours: replaying it next time would only fail first.
-            if (!Quark.isLink(c.url)) resolvedUrl?.let { Store.setVodLast(key, Store.VodLast(items[c.src].sourceKey, c.line, lineName, curEp, c.url, it, System.currentTimeMillis())) }
+            // jar 爬虫的地址也一样：要带的请求头、媒体类型都在内存里，下次直接放会失败
+            if (!Quark.isLink(c.url) && !Spiders.isLink(c.url) && !PanShares.isLink(c.url)) resolvedUrl?.let { Store.setVodLast(key, Store.VodLast(items[c.src].sourceKey, c.line, lineName, curEp, c.url, it, System.currentTimeMillis())) }
         }
     }
 
@@ -3256,7 +3297,9 @@ class PlayActivity : BaseActivity() {
 
     /** The item for one stream: the type hint, and the subtitle file the user imported, if any. */
     private fun mediaFor(stream: String): MediaItem = MediaItem.Builder().setUri(stream).apply {
-        if (stream.contains(".m3u8", ignoreCase = true)) setMimeType(MimeTypes.APPLICATION_M3U8)
+        // jar 爬虫给的地址常看不出类型（getM3u8?…、B 站的 DASH），用取地址时判断出来的
+        val mime = Spiders.mimeFor(stream) ?: if (stream.contains(".m3u8", ignoreCase = true)) MimeTypes.APPLICATION_M3U8 else null
+        mime?.let(::setMimeType)
         extSubtitle?.let { uri ->
             val subtitle = MediaItem.SubtitleConfiguration.Builder(uri)
                 .setMimeType(extSubtitleMime)

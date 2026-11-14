@@ -157,6 +157,9 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         val parallelPrefetch = view.findViewById<ChipGroup>(R.id.parallelPrefetch)
         parallelPrefetch.check(if (Store.parallelPrefetch()) R.id.prefetchOn else R.id.prefetchOff)
         parallelPrefetch.setOnCheckedStateChangeListener { _, ids -> Store.setParallelPrefetch(ids.firstOrNull() == R.id.prefetchOn) }
+        val jarSpiders = view.findViewById<ChipGroup>(R.id.jarSpiders)
+        jarSpiders.check(if (Store.jarSpiders()) R.id.jarOn else R.id.jarOff)
+        jarSpiders.setOnCheckedStateChangeListener { _, ids -> Store.setJarSpiders(ids.firstOrNull() == R.id.jarOn) }
 
         val dlna = view.findViewById<ChipGroup>(R.id.dlnaReceiver)
         view.findViewById<TextView>(R.id.dlnaHint).text = "开启后，同一个 Wi-Fi 下的手机在视频 App（如哔哩哔哩）的投屏列表里能看到「TV Player（${android.os.Build.MODEL}）」，" +

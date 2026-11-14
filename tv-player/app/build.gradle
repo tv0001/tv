@@ -20,8 +20,8 @@ android {
         applicationId = 'com.tv.player'
         minSdk = legacy ? 21 : 26
         targetSdk = 35
-        versionCode = (project.findProperty('appVersionCode') ?: '41').toString().toInteger()
-        versionName = (project.findProperty('appVersionName') ?: '1.0.40').toString()
+        versionCode = (project.findProperty('appVersionCode') ?: '42').toString().toInteger()
+        versionName = (project.findProperty('appVersionName') ?: '1.0.41').toString()
         buildConfigField 'boolean', 'LEGACY', legacy.toString()
         // 唯一的原生库是 ffmpeg 音频解码：电视盒子和手机基本都是 ARM，只打这两种（少 3MB）。没有 ARM 转译的 x86 设备装不上
         ndk {
@@ -31,6 +31,7 @@ android {
 
     buildFeatures {
         buildConfig = true
+        aidl = true // 爬虫进程的接口（ISpiderService）
     }
 
     buildTypes {
@@ -87,6 +88,8 @@ dependencies {
     implementation 'com.google.android.material:material:1.12.0'
     implementation 'androidx.media3:media3-exoplayer:1.6.1'
     implementation 'androidx.media3:media3-exoplayer-hls:1.6.1'
+    // B 站等 jar 爬虫给的是 DASH（见 Spiders）
+    implementation 'androidx.media3:media3-exoplayer-dash:1.6.1'
     implementation 'androidx.media3:media3-ui:1.6.1'
     // 播放器走 OkHttp：和测速、解析共用一个连接池（见 Http.playerClient）
     implementation 'androidx.media3:media3-datasource-okhttp:1.6.1'
@@ -97,6 +100,8 @@ dependencies {
     // 网络存储的 SMB（Windows 共享、NAS）
     implementation 'com.hierynomus:smbj:0.15.0'
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    // TVBox jar 爬虫（见 Spiders）运行时要用宿主提供的 gson
+    implementation 'com.google.code.gson:gson:2.11.0'
     implementation 'io.coil-kt:coil:2.7.0'
     implementation 'com.google.zxing:core:3.5.3'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0'

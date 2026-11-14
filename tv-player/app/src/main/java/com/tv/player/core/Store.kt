@@ -57,9 +57,21 @@ object Store {
     /** Sources from the subscription (or the bundled copy), plus the extra CMS sites that were verified with a real search. */
     fun subscribed(): List<VodSource> =
         parseSources(prefs.getString("config", null) ?: bundledConfig) +
-            runCatching { parseSources(prefs.getString("cms", null) ?: asset("cms.json")) }.getOrDefault(emptyList())
+            runCatching { parseSources(prefs.getString("cms", null) ?: asset("cms.json")) }.getOrDefault(emptyList()) +
+            (if (jarSpiders()) runCatching { Spiders.sources(configText()) }.getOrDefault(emptyList()) else emptyList())
 
     fun saveCms(text: String) = prefs.edit().putString("cms", text).apply()
+
+    /** 当前订阅的配置（没更新过时是内置的 best.json）。 */
+    fun configText(): String = prefs.getString("config", null) ?: bundledConfig
+
+    /** 是否加载订阅里的 jar 爬虫站点（第三方代码，默认关闭，见 Spiders）。 */
+    fun jarSpiders(): Boolean = prefs.getBoolean("jar_spiders", false)
+
+    fun setJarSpiders(on: Boolean) {
+        prefs.edit().putBoolean("jar_spiders", on).apply()
+        if (!on) Spiders.stop()
+    }
 
     /**
      * 点播先试哪个源：cms.json 是 tvbox-check/cms_sources.py 按实测播放速度排好的（快的在前），按主机名取名次；
@@ -220,19 +232,48 @@ object Store {
 
     fun setQuarkDeviceId(id: String) = prefs.edit().putString("quark_device", id).apply()
 
-    fun quarkRefreshToken(): String = prefs.getString("quark_refresh", "") ?: ""
+    // ---- 加密存的设置（见 Secrets）-----------------------------------------------------------------------------
 
-    fun quarkAccessToken(): String = prefs.getString("quark_access", "") ?: ""
+    /** 解开的值按存的密文缓存：读得很频繁（每个网盘请求都要取令牌），不必每次都过 Keystore。 */
+    private val secretCache = java.util.concurrent.ConcurrentHashMap<String, Pair<String, String>>()
 
-    fun setQuarkTokens(refresh: String, access: String) = prefs.edit().putString("quark_refresh", refresh).putString("quark_access", access).apply()
+    /** 迁移明文和写新值用同一把锁：迁移写回前确认存的还是那段明文，不会把刚刷新的令牌换回旧的。 */
+    private val secretLock = Any()
+
+    private fun secret(key: String, default: String = ""): String {
+        val stored = prefs.getString(key, null) ?: return default
+        secretCache[key]?.let { if (it.first == stored) return it.second }
+        // 解不开时不缓存（Keystore 偶尔出错，下次再试），当作没有
+        val plain = Secrets.open(stored) ?: return default
+        // 旧版本存的明文：顺手加密，不用重新登录
+        if (!Secrets.isSealed(stored) && stored.isNotEmpty()) {
+            val sealed = Secrets.seal(stored)
+            if (sealed != stored) synchronized(secretLock) { if (prefs.getString(key, null) == stored) prefs.edit().putString(key, sealed).commit() }
+        }
+        secretCache[key] = stored to plain
+        return plain
+    }
+
+    /** 存着的密文现在解不开：别拿「没有」去覆盖它（比如网络存储列表读成空时又加一个，会把别的账号都冲掉）。 */
+    private fun unreadable(key: String) = prefs.getString(key, null)?.let { Secrets.isSealed(it) && Secrets.open(it) == null } ?: false
+
+    private fun putSecrets(vararg pairs: Pair<String, String>) = synchronized(secretLock) {
+        prefs.edit().apply { pairs.forEach { (k, v) -> putString(k, Secrets.seal(v)) } }.apply()
+    }
+
+    fun quarkRefreshToken(): String = secret("quark_refresh")
+
+    fun quarkAccessToken(): String = secret("quark_access")
+
+    fun setQuarkTokens(refresh: String, access: String) = putSecrets("quark_refresh" to refresh, "quark_access" to access)
 
     // ---- 夸克网盘, web session (transferring shares needs it; the TV token cannot) --------------------------------
 
-    fun quarkWebPus(): String = prefs.getString("quark_web_pus", "") ?: ""
+    fun quarkWebPus(): String = secret("quark_web_pus")
 
-    fun quarkWebPuus(): String = prefs.getString("quark_web_puus", "") ?: ""
+    fun quarkWebPuus(): String = secret("quark_web_puus")
 
-    fun setQuarkWebCookies(pus: String, puus: String) = prefs.edit().putString("quark_web_pus", pus).putString("quark_web_puus", puus).apply()
+    fun setQuarkWebCookies(pus: String, puus: String) = putSecrets("quark_web_pus" to pus, "quark_web_puus" to puus)
 
     /** "tabs": one chart per top tab as a grid; "rows": all charts stacked, each scrolling sideways. */
     fun hotLayout(): String = prefs.getString("hot_layout", "tabs") ?: "tabs"
@@ -310,9 +351,15 @@ object Store {
     fun setDownloadOnMetered(on: Boolean) = prefs.edit().putBoolean("download_metered", on).apply()
 
     /** 网络存储（WebDAV / SMB）的列表，JSON，含账号密码：只存在本机，不进备份。 */
-    fun netServersJson(): String = prefs.getString("net_servers", null) ?: "[]"
+    fun netServersJson(): String = secret("net_servers", "[]").ifEmpty { "[]" }
 
-    fun setNetServersJson(json: String) = prefs.edit().putString("net_servers", json).apply()
+    fun setNetServersJson(json: String) {
+        if (unreadable("net_servers")) {
+            android.util.Log.w("Store", "网络存储账号暂时读不出来，这次不保存，免得覆盖")
+            return
+        }
+        putSecrets("net_servers" to json)
+    }
 
     /** 投屏接收端的设备编号：手机记住的是它，所以生成一次以后不变。 */
     fun dlnaUuid(): String = prefs.getString("dlna_uuid", null) ?: java.util.UUID.randomUUID().toString().also {

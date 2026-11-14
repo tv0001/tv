@@ -39,6 +39,7 @@ object Cms {
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
 
     suspend fun search(source: VodSource, keyword: String): List<VodItem> {
+        if (Spiders.isSource(source)) return Spiders.search(source, keyword)
         val r = Http.get(url(source.api, "ac=videolist&wd=${enc(keyword)}&pg=1"))
         if (r.status != 200) throw IllegalStateException(r.error ?: "HTTP ${r.status}")
         val root = try {
@@ -64,6 +65,7 @@ object Cms {
     }
 
     suspend fun detail(source: VodSource, id: String): VodDetail? {
+        if (Spiders.isSource(source)) return Spiders.detail(source, id)
         val r = Http.get(url(source.api, "ac=detail&ids=${enc(id)}"))
         if (r.status != 200) return null
         val o = JSONObject(r.text).optJSONArray("list")?.optJSONObject(0) ?: return null

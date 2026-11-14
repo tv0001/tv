@@ -33,6 +33,7 @@ object Http {
             .followRedirects(true)
             .followSslRedirects(true)
             .dns(dns)
+            .addInterceptor(Spiders.headers) // jar 爬虫要求的请求头（见 Spiders）
             .protocols(listOf(Protocol.HTTP_1_1))
             .connectionPool(ConnectionPool(16, 5, TimeUnit.MINUTES))
             .dispatcher(Dispatcher().apply { maxRequestsPerHost = 16 })

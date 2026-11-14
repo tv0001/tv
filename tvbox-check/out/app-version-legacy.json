@@ -1,9 +1,9 @@
 {
-  "versionCode": 41,
-  "versionName": "1.0.40",
-  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.40-legacy.apk",
-  "sha256": "e9738a62e4bd73054f3c04eb2fad7b9ede5cfbfa59fe13ec10df644134d66430",
-  "size": 5055041,
-  "notes": "点播：播放中反复卡顿或卡住时，自动换到测过更流畅的线路；自动换源按集名找同一集，综艺不会再跳到别的期；暂停或网络空闲时提前缓存后面的视频（缓存上限 1G）；同一部片先试播放速度快的源。直播：卡住几秒就自动换到流畅的线路。",
+  "versionCode": 42,
+  "versionName": "1.0.41",
+  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/tv0001/tv/main/tv-player/releases/TV-Player-1.0.41-legacy.apk",
+  "sha256": "8c2854a75bc7e9918fb743601aab05245875e570d408cb7e28db002c3b007333",
+  "size": 5263937,
+  "notes": "设置里新增「jar 爬虫站点（实验）」：打开后，订阅里用 TVBox jar 爬虫的站点也能搜索和播放（在单独的进程里运行，不运行 jar 自带的原生程序）；支持 B 站等 DASH 视频、需要解析的网页播放地址、网盘资源站里的夸克分享（播放时转存到你的网盘，需要夸克网页版登录）。夸克网盘和网络存储的登录改为加密保存。只剩最后一条线路时多等一会儿再判失败。",
   "force": false
 }

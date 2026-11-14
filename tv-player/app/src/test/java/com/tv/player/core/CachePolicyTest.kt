@@ -16,6 +16,7 @@ class CachePolicyTest {
     fun `playlists and keys are always read from the network`() {
         assertFalse(CachePolicy.cacheable("https", "/20250415/469108/index.m3u8"))
         assertFalse(CachePolicy.cacheable("https", "/a/B.M3U8"))
+        assertFalse(CachePolicy.cacheable("https", "/dash/manifest.mpd"))
         assertFalse(CachePolicy.cacheable("https", "/a/enc.key"))
         assertFalse(CachePolicy.cacheable("https", "/a/sub.vtt"))
     }

@@ -6,7 +6,7 @@ package com.tv.player.core
  * expired is never served again from the disk. Anything that is not http(s) (a subtitle file on the phone) stays out too.
  */
 object CachePolicy {
-    private val neverCached = Regex("\\.(m3u8?|key|vtt|srt|ass)$", RegexOption.IGNORE_CASE)
+    private val neverCached = Regex("\\.(m3u8?|mpd|key|vtt|srt|ass)$", RegexOption.IGNORE_CASE)
 
     fun cacheable(scheme: String?, path: String?): Boolean {
         if (!scheme.equals("http", true) && !scheme.equals("https", true)) return false

@@ -12,6 +12,7 @@ import com.tv.player.core.Http
 import com.tv.player.core.LegacyTls
 import com.tv.player.core.PlayLog
 import com.tv.player.core.Library
+import com.tv.player.core.Spiders
 import com.tv.player.core.Store
 import com.tv.player.ui.CastSession
 import com.tv.player.ui.Episodes
@@ -19,6 +20,11 @@ import com.tv.player.ui.Episodes
 class App : Application() {
     override fun onCreate() {
         super.onCreate()
+        // 爬虫进程（见 SpiderService）只跑第三方 jar：补根证书就够了，数据库、投屏、网络回调这些主进程的东西都不碰
+        if (processName().endsWith(":spider")) {
+            LegacyTls.install(this)
+            return
+        }
         CrashLog.install(this) // 最先装上：后面初始化时崩了也要记下来
         PlayLog.install(this)
         LegacyTls.install(this) // 兼容包在 Android 7.1 以下补根证书，其余情况什么都不做
@@ -39,10 +45,15 @@ class App : Application() {
             )
         }
         Store.init(this)
+        Spiders.init(this)
         Library.init(this)
         Episodes.schedule(this)
         watchForeground()
     }
+
+    private fun processName(): String =
+        if (Build.VERSION.SDK_INT >= 28) getProcessName()
+        else runCatching { java.io.File("/proc/self/cmdline").readText().trim('\u0000', ' ', '\n') }.getOrDefault("")
 
     /** 投屏接收只在应用前台时开：有页面在前台就开，全部退到后台半分钟后关（页面之间切换时不来回开关）。 */
     private fun watchForeground() {

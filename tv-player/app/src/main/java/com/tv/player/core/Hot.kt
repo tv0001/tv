@@ -71,7 +71,7 @@ object Hot {
      */
     private suspend fun shortDramas(force: Boolean): Section? {
         shortCache?.let { if (!force && System.currentTimeMillis() - shortAt < 20 * 60_000L) return it }
-        val sources = Store.sources().take(12)
+        val sources = Store.sources().filterNot(Spiders::isSource).take(12) // 短剧分类走 CMS 接口，jar 爬虫站点没有
         val groups = coroutineScope { sources.map { s -> async { runCatching { shortOf(s).map { Item(it.title, it.pic, 0.0, "", it.remarks) } }.getOrDefault(emptyList()) } }.awaitAll() }
         val mixed = ArrayList<Item>()
         for (i in 0 until (groups.maxOfOrNull { it.size } ?: 0)) groups.forEach { g -> g.getOrNull(i)?.let(mixed::add) }
@@ -85,7 +85,7 @@ object Hot {
      * items keep their source and id, so a card can be played straight away; the caller merges equal titles.
      */
     suspend fun shortPage(n: Int): List<VodItem> {
-        val sources = Store.sources().take(12)
+        val sources = Store.sources().filterNot(Spiders::isSource).take(12) // 短剧分类走 CMS 接口，jar 爬虫站点没有
         val groups = coroutineScope { sources.map { s -> async { runCatching { shortOf(s, n) }.getOrDefault(emptyList()) } }.awaitAll() }
         val mixed = ArrayList<VodItem>()
         for (i in 0 until (groups.maxOfOrNull { it.size } ?: 0)) groups.forEach { g -> g.getOrNull(i)?.let(mixed::add) }
@@ -159,7 +159,7 @@ object Hot {
      */
     private suspend fun latest(force: Boolean): List<Section>? {
         latestCache?.let { if (!force && System.currentTimeMillis() - latestAt < 20 * 60_000L) return it }
-        val sources = Store.sources().take(6)
+        val sources = Store.sources().filterNot(Spiders::isSource).take(6) // 最新列表走 CMS 接口，jar 爬虫站点没有
         val rows = coroutineScope { sources.map { s -> async { runCatching { latestOf(s) }.getOrDefault(emptyList()) } }.awaitAll() }.flatten()
         val sections = listOf("剧集", "电影", "综艺", "动漫", SHORT).mapNotNull { kind ->
             val items = rows.filter { it.first == kind }.map { it.second }.distinctBy { Search.normalize(it.title) }.take(20)

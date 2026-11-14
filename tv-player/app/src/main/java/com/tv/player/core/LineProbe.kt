@@ -41,8 +41,11 @@ object LineProbe {
     }
 
     private suspend fun run(playUrl: String, capHeight: Int): Result {
+        // 夸克分享要先转存到网盘才有地址：测速不能替用户转存（只有真放的那一集才转）
+        if (PanShares.isLink(playUrl)) return failed
         val stream = Resolve.stream(playUrl) ?: return failed
-        if (!stream.contains(".m3u8", ignoreCase = true)) {
+        val hls = stream.contains(".m3u8", ignoreCase = true) || Spiders.mimeFor(stream) == androidx.media3.common.MimeTypes.APPLICATION_M3U8
+        if (!hls) {
             val f = Http.fetchBytes(stream, 4_000, 1_500_000, maxReadMs = 1_500)
             if (f.status !in 200..299 || f.bytes <= 0) return failed
             val mbps = throughput(f)
