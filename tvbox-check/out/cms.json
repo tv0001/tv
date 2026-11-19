@@ -131,6 +131,16 @@
    "play": 2.0
   },
   {
+   "key": "https://huyazy.net/api.php/provide/vod",
+   "name": "虎牙资源站",
+   "type": 1,
+   "api": "https://huyazy.net/api.php/provide/vod/",
+   "ms": 1571,
+   "count": 20,
+   "from": "cms-candidates.tsv",
+   "play": 1.9
+  },
+  {
    "key": "https://www.hongniuzy2.com/api.php/provide/vod",
    "name": "🐂┃红牛┃采集",
    "type": 1,
